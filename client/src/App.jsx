@@ -8,6 +8,7 @@ import ClientDetail from './pages/ClientDetail'
 import Standards from './pages/Standards'
 import Assessments from './pages/Assessments'
 import AssessmentDetail from './pages/AssessmentDetail'
+import Assets from './pages/Assets'
 import Placeholder from './pages/Placeholder'
 
 function ProtectedRoute({ children }) {
@@ -56,7 +57,7 @@ function AppRoutes() {
         <Route path="/assessments" element={<Assessments />} />
         <Route path="/assessments/:id" element={<AssessmentDetail />} />
         <Route path="/recommendations" element={<Placeholder />} />
-        <Route path="/assets" element={<Placeholder />} />
+        <Route path="/assets" element={<Assets />} />
         <Route path="/roadmap" element={<Placeholder />} />
         <Route path="/budget" element={<Placeholder />} />
         <Route path="/eos" element={<Placeholder />} />

@@ -23,10 +23,10 @@ import { useAuth } from '../hooks/useAuth'
 const navItems = [
   { to: '/',               icon: LayoutDashboard,  label: 'Dashboard' },
   { to: '/clients',        icon: Building2,        label: 'Clients' },
+  { to: '/assets',         icon: Monitor,          label: 'Assets' },
   { to: '/standards',      icon: BookOpen,         label: 'Standards' },
   { to: '/assessments',    icon: ShieldCheck,      label: 'Assessments' },
   { to: '/recommendations',icon: ClipboardList,    label: 'Recommendations' },
-  { to: '/assets',         icon: Monitor,          label: 'Assets' },
   { to: '/roadmap',        icon: Map,              label: 'Roadmap' },
   { to: '/budget',         icon: DollarSign,       label: 'Budget' },
   { to: '/eos',            icon: Target,           label: 'EOS' },
