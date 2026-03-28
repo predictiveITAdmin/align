@@ -18,6 +18,7 @@ const recommendationsRouter = require('./routes/recommendations')
 const assetsRouter         = require('./routes/assets')
 const eosRouter            = require('./routes/eos')
 const csatRouter           = require('./routes/csat')
+const integrationsRouter   = require('./routes/integrations')
 
 const app = express()
 const server = createServer(app)
@@ -58,6 +59,7 @@ app.use('/api/recommendations', recommendationsRouter)
 app.use('/api/assets', assetsRouter)
 app.use('/api/eos', eosRouter)
 app.use('/api/csat', csatRouter)
+app.use('/api/integrations', integrationsRouter)
 
 // ─── 404 fallback ────────────────────────────────────────────────────────────
 app.use('/api/*', (req, res) => {
