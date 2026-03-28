@@ -3,6 +3,12 @@ const router = express.Router()
 const { syncClients } = require('../services/autotaskSync')
 const { syncAssets } = require('../services/autotaskAssetSync')
 const { syncCSAT } = require('../services/csatSync')
+const { syncMITP } = require('../services/mitpSync')
+const { syncScalePad } = require('../services/scalepadSync')
+const { syncDattoRmm } = require('../services/dattoRmmSync')
+const { syncItGlue } = require('../services/itGlueSync')
+const { syncSaasAlerts } = require('../services/saasAlertsSync')
+const { syncAuvik } = require('../services/auvikSync')
 const db = require('../db')
 
 // Helper to get tenant ID (uses req.tenant from middleware, falls back to predictiveit)
@@ -51,6 +57,84 @@ router.post('/csat', async (req, res) => {
   }
 })
 
+// POST /api/sync/mitp — MyITProcess standards + recommendations import
+router.post('/mitp', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncMITP(tenantId)
+    res.json({ status: 'ok', source: 'myitprocess', entity: 'standards', ...result })
+  } catch (err) {
+    console.error('[sync] mitp error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/scalepad — ScalePad templates + assessments import
+router.post('/scalepad', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncScalePad(tenantId)
+    res.json({ status: 'ok', source: 'scalepad', entity: 'standards', ...result })
+  } catch (err) {
+    console.error('[sync] scalepad error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/datto-rmm — Datto RMM device sync
+router.post('/datto-rmm', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncDattoRmm(tenantId)
+    res.json({ status: 'ok', source: 'datto_rmm', entity: 'assets', ...result })
+  } catch (err) {
+    console.error('[sync] datto-rmm error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/it-glue — IT Glue configurations sync
+router.post('/it-glue', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncItGlue(tenantId)
+    res.json({ status: 'ok', source: 'it_glue', entity: 'assets', ...result })
+  } catch (err) {
+    console.error('[sync] it-glue error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/saas-alerts — SaaS Alerts license sync
+router.post('/saas-alerts', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncSaasAlerts(tenantId)
+    res.json({ status: 'ok', source: 'saas_alerts', entity: 'saas_licenses', ...result })
+  } catch (err) {
+    console.error('[sync] saas-alerts error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/auvik — Auvik network device sync
+router.post('/auvik', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncAuvik(tenantId)
+    res.json({ status: 'ok', source: 'auvik', entity: 'assets', ...result })
+  } catch (err) {
+    console.error('[sync] auvik error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/sync/all — run all syncs sequentially
 router.post('/all', async (req, res) => {
   try {
@@ -61,6 +145,12 @@ router.post('/all', async (req, res) => {
     results.clients = await syncClients(tenantId)
     results.assets = await syncAssets(tenantId)
     results.csat = await syncCSAT(tenantId)
+    results.mitp = await syncMITP(tenantId)
+    results.scalepad = await syncScalePad(tenantId)
+    results.dattoRmm = await syncDattoRmm(tenantId)
+    results.itGlue = await syncItGlue(tenantId)
+    results.saasAlerts = await syncSaasAlerts(tenantId)
+    results.auvik = await syncAuvik(tenantId)
 
     res.json({ status: 'ok', results })
   } catch (err) {
