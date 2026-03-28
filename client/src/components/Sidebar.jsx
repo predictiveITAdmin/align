@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Building2,
   ShieldCheck,
+  BookOpen,
   ClipboardList,
   Monitor,
   Map,
@@ -10,6 +11,7 @@ import {
   Target,
   BarChart3,
   FileText,
+  MessageSquarePlus,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -19,16 +21,17 @@ import { cn } from '../lib/cn'
 import { useAuth } from '../hooks/useAuth'
 
 const navItems = [
-  { to: '/',               icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/clients',        icon: Building2,       label: 'Clients' },
-  { to: '/assessments',    icon: ShieldCheck,     label: 'Assessments' },
-  { to: '/recommendations',icon: ClipboardList,   label: 'Recommendations' },
-  { to: '/assets',         icon: Monitor,         label: 'Assets' },
-  { to: '/roadmap',        icon: Map,             label: 'Roadmap' },
-  { to: '/budget',         icon: DollarSign,      label: 'Budget' },
-  { to: '/eos',            icon: Target,          label: 'EOS' },
-  { to: '/analytics',      icon: BarChart3,       label: 'Analytics' },
-  { to: '/reports',        icon: FileText,        label: 'Reports' },
+  { to: '/',               icon: LayoutDashboard,  label: 'Dashboard' },
+  { to: '/clients',        icon: Building2,        label: 'Clients' },
+  { to: '/standards',      icon: BookOpen,         label: 'Standards' },
+  { to: '/assessments',    icon: ShieldCheck,      label: 'Assessments' },
+  { to: '/recommendations',icon: ClipboardList,    label: 'Recommendations' },
+  { to: '/assets',         icon: Monitor,          label: 'Assets' },
+  { to: '/roadmap',        icon: Map,              label: 'Roadmap' },
+  { to: '/budget',         icon: DollarSign,       label: 'Budget' },
+  { to: '/eos',            icon: Target,           label: 'EOS' },
+  { to: '/analytics',      icon: BarChart3,        label: 'Analytics' },
+  { to: '/reports',        icon: FileText,         label: 'Reports' },
 ]
 
 export default function Sidebar() {
