@@ -7,6 +7,7 @@
 
 const axios = require('axios')
 const db = require('../db')
+const { upsertAutotaskAsset } = require('../lib/assetUpsert')
 
 function buildClient() {
   const zone = process.env.AUTOTASK_ZONE || 'webservices1'
@@ -123,46 +124,20 @@ async function syncAssets(tenantId) {
       const macRaw = item.rmmDeviceAuditMacAddress || null
       const macAddress = macRaw && /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(macRaw) ? macRaw : null
 
-      const result = await db.query(
-        `INSERT INTO assets (
-          tenant_id, client_id, asset_type_id, name,
-          serial_number, operating_system,
-          ip_address, mac_address,
-          warranty_expiry, purchase_date, is_active,
-          primary_source, autotask_ci_id, autotask_data, last_seen_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7::inet,$8::macaddr,$9,$10,$11,'autotask',$12,$13,NOW())
-        ON CONFLICT (tenant_id, autotask_ci_id) WHERE autotask_ci_id IS NOT NULL
-        DO UPDATE SET
-          client_id = EXCLUDED.client_id,
-          asset_type_id = EXCLUDED.asset_type_id,
-          name = EXCLUDED.name,
-          serial_number = EXCLUDED.serial_number,
-          operating_system = EXCLUDED.operating_system,
-          ip_address = EXCLUDED.ip_address,
-          warranty_expiry = EXCLUDED.warranty_expiry,
-          is_active = EXCLUDED.is_active,
-          autotask_data = EXCLUDED.autotask_data,
-          last_seen_at = NOW(),
-          updated_at = NOW()
-        RETURNING (xmax = 0) AS is_insert`,
-        [
-          tenantId,
-          clientId,
-          assetTypeId,
-          item.referenceTitle || hostname || `Asset ${item.id}`,
-          item.serialNumber || null,
-          item.rmmDeviceAuditOperatingSystem || null,
-          ipAddress,
-          macAddress,
-          item.warrantyExpirationDate || null,
-          item.installDate || null,
-          item.isActive,
-          item.id,
-          JSON.stringify(item),
-        ]
-      )
+      const upsertResult = await upsertAutotaskAsset({
+        tenantId,
+        clientId,
+        assetTypeId,
+        ciId: item.id,
+        name: item.referenceTitle || hostname || `Asset ${item.id}`,
+        serial: item.serialNumber || null,
+        os: item.rmmDeviceAuditOperatingSystem || null,
+        purchaseDate: item.installDate || null,
+        warrantyDate: item.warrantyExpirationDate || null,
+        ciData: item,
+      })
 
-      if (result.rows[0]?.is_insert) created++
+      if (upsertResult.isNew) created++
       else updated++
     }
 

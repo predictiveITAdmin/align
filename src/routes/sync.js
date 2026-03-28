@@ -10,6 +10,7 @@ const { syncItGlue } = require('../services/itGlueSync')
 const { syncSaasAlerts } = require('../services/saasAlertsSync')
 const { syncAuvik } = require('../services/auvikSync')
 const { syncContacts } = require('../services/autotaskContactsSync')
+const { deduplicateAssets } = require('../services/assetDedup')
 const db = require('../db')
 
 // Helper to get tenant ID (uses req.tenant from middleware, falls back to predictiveit)
@@ -132,6 +133,19 @@ router.post('/auvik', async (req, res) => {
     res.json({ status: 'ok', source: 'auvik', entity: 'assets', ...result })
   } catch (err) {
     console.error('[sync] auvik error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/dedup-assets — merge duplicate asset records across sources
+router.post('/dedup-assets', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await deduplicateAssets(tenantId)
+    res.json({ status: 'ok', ...result })
+  } catch (err) {
+    console.error('[sync] dedup-assets error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

@@ -8,6 +8,7 @@
 
 const axios = require('axios')
 const db = require('../db')
+const { upsertItGlueAsset } = require('../lib/assetUpsert')
 
 const ITGLUE_BASE = 'https://api.itglue.com'
 const ACTIVE_ORG_STATUS_ID = 79219
@@ -181,38 +182,24 @@ async function syncItGlue(tenantId) {
       const ipRaw = attrs['primary-ip'] || null
       const ipAddress = ipRaw && /^\d{1,3}(\.\d{1,3}){3}$/.test(ipRaw) ? ipRaw : null
 
-      const result = await db.query(
-        `INSERT INTO assets (
-          tenant_id, client_id, asset_type_id, name,
-          serial_number, warranty_expiry, ip_address,
-          is_active, primary_source, it_glue_config_id, it_glue_data, last_seen_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7::inet,true,'it_glue',$8,$9,NOW())
-        ON CONFLICT (tenant_id, it_glue_config_id) WHERE it_glue_config_id IS NOT NULL
-        DO UPDATE SET
-          client_id = EXCLUDED.client_id,
-          asset_type_id = EXCLUDED.asset_type_id,
-          name = EXCLUDED.name,
-          serial_number = EXCLUDED.serial_number,
-          warranty_expiry = EXCLUDED.warranty_expiry,
-          ip_address = EXCLUDED.ip_address,
-          it_glue_data = EXCLUDED.it_glue_data,
-          last_seen_at = NOW(),
-          updated_at = NOW()
-        RETURNING (xmax = 0) AS is_insert`,
-        [
-          tenantId,
-          clientId,
-          assetTypeId,
-          attrs.name || `Config ${configId}`,
-          attrs['serial-number'] || null,
-          attrs['warranty-expires-at'] ? attrs['warranty-expires-at'].slice(0, 10) : null,
-          ipAddress,
-          configId,
-          JSON.stringify(config),
-        ]
-      )
+      const purchaseDateRaw = attrs['installed-at'] || attrs['purchased-at'] || null
+      const purchaseDate = purchaseDateRaw ? purchaseDateRaw.slice(0, 10) : null
+      const warrantyDate = attrs['warranty-expires-at'] ? attrs['warranty-expires-at'].slice(0, 10) : null
 
-      if (result.rows[0]?.is_insert) created++
+      const upsertResult = await upsertItGlueAsset({
+        tenantId,
+        clientId,
+        assetTypeId,
+        configId,
+        name: attrs.name || `Config ${configId}`,
+        serial: attrs['serial-number'] || null,
+        warrantyDate,
+        purchaseDate,
+        ipAddress,
+        configData: config,
+      })
+
+      if (upsertResult.isNew) created++
       else updated++
     }
 

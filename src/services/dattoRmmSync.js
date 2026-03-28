@@ -7,6 +7,7 @@
 
 const axios = require('axios')
 const db = require('../db')
+const { upsertDattoAsset } = require('../lib/assetUpsert')
 
 // ─── OAuth2 token management ─────────────────────────────────────────────────
 
@@ -186,43 +187,21 @@ async function syncDattoRmm(tenantId) {
       const ipRaw = device.intIpAddress || device.ipAddress || null
       const ipAddress = ipRaw && /^\d{1,3}(\.\d{1,3}){3}$/.test(ipRaw) ? ipRaw : null
 
-      const result = await db.query(
-        `INSERT INTO assets (
-          tenant_id, client_id, asset_type_id, name,
-          serial_number, operating_system, ip_address,
-          warranty_expiry, is_online, is_active,
-          primary_source, datto_rmm_device_id, datto_rmm_data, last_seen_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7::inet,$8,$9,true,'datto_rmm',$10,$11,NOW())
-        ON CONFLICT (tenant_id, datto_rmm_device_id) WHERE datto_rmm_device_id IS NOT NULL
-        DO UPDATE SET
-          client_id = EXCLUDED.client_id,
-          asset_type_id = EXCLUDED.asset_type_id,
-          name = EXCLUDED.name,
-          serial_number = EXCLUDED.serial_number,
-          operating_system = EXCLUDED.operating_system,
-          ip_address = EXCLUDED.ip_address,
-          warranty_expiry = EXCLUDED.warranty_expiry,
-          is_online = EXCLUDED.is_online,
-          datto_rmm_data = EXCLUDED.datto_rmm_data,
-          last_seen_at = NOW(),
-          updated_at = NOW()
-        RETURNING (xmax = 0) AS is_insert`,
-        [
-          tenantId,
-          clientId,
-          assetTypeId,
-          device.hostname || device.deviceName || `Device ${deviceId}`,
-          device.serialNumber || null,
-          device.operatingSystem || null,
-          ipAddress,
-          device.warrantyDate || null,
-          device.online === true || device.online === 'true',
-          deviceId,
-          JSON.stringify(device),
-        ]
-      )
+      const upsertResult = await upsertDattoAsset({
+        tenantId,
+        clientId,
+        assetTypeId,
+        deviceId,
+        name: device.hostname || device.deviceName || `Device ${deviceId}`,
+        serial: device.serialNumber || null,
+        os: device.operatingSystem || null,
+        ipAddress,
+        warrantyDate: device.warrantyDate || null,
+        isOnline: device.online === true || device.online === 'true',
+        deviceData: device,
+      })
 
-      if (result.rows[0]?.is_insert) created++
+      if (upsertResult.isNew) created++
       else updated++
     }
 

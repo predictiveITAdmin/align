@@ -193,16 +193,20 @@ function AssetsTab({ clientId }) {
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading assets...</div>
 
+  const dattoCount = assets.filter(a => a.datto_rmm_device_id).length
+  const itgCount = assets.filter(a => a.it_glue_config_id).length
+  const auvikCount = assets.filter(a => a.auvik_device_id).length
+  const multiCount = assets.filter(a =>
+    (!!a.datto_rmm_device_id + !!a.it_glue_config_id + !!a.autotask_ci_id + !!a.auvik_device_id) >= 2
+  ).length
+
   const filtered = assets.filter(a => {
     if (filter === 'datto') return !!a.datto_rmm_device_id
     if (filter === 'itg') return !!a.it_glue_config_id
     if (filter === 'auvik') return !!a.auvik_device_id
+    if (filter === 'multi') return (!!a.datto_rmm_device_id + !!a.it_glue_config_id + !!a.autotask_ci_id + !!a.auvik_device_id) >= 2
     return true
   })
-
-  const dattoCount = assets.filter(a => a.datto_rmm_device_id).length
-  const itgCount = assets.filter(a => a.it_glue_config_id).length
-  const auvikCount = assets.filter(a => a.auvik_device_id).length
 
   return (
     <div>
@@ -210,7 +214,8 @@ function AssetsTab({ clientId }) {
       <div className="flex items-center gap-2 mb-4">
         {[
           { key: 'all',   label: `All (${assets.length})` },
-          { key: 'datto', label: `Datto RMM (${dattoCount})` },
+          { key: 'multi', label: `Multi-source (${multiCount})` },
+          { key: 'datto', label: `RMM (${dattoCount})` },
           { key: 'itg',   label: `IT Glue (${itgCount})` },
           { key: 'auvik', label: `Auvik (${auvikCount})` },
         ].map(({ key, label }) => (
@@ -264,28 +269,31 @@ function AssetsTab({ clientId }) {
                       <p className="text-xs text-gray-400 truncate">{[asset.manufacturer, asset.model].filter(Boolean).join(' ')}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {dattoUrl && (
-                      <a
-                        href={dattoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium"
-                        title="Open in Datto RMM"
-                      >
-                        RMM <ExternalLink size={11} />
-                      </a>
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                    {/* Source badges — show which systems this asset exists in */}
+                    {asset.autotask_ci_id && (
+                      <span className="text-xs bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 font-medium" title="In Autotask PSA">PSA</span>
                     )}
-                    {itgUrl && (
-                      <a
-                        href={itgUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-green-600 hover:text-green-700 font-medium"
-                        title="Open in IT Glue"
-                      >
-                        ITG <ExternalLink size={11} />
+                    {dattoUrl ? (
+                      <a href={dattoUrl} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-0.5 text-xs bg-primary-50 text-primary-700 border border-primary-200 rounded px-1.5 py-0.5 font-medium hover:bg-primary-100"
+                        title="Open in Datto RMM">
+                        RMM <ExternalLink size={10} />
                       </a>
+                    ) : asset.datto_rmm_device_id && (
+                      <span className="text-xs bg-primary-50 text-primary-700 rounded px-1.5 py-0.5 font-medium">RMM</span>
+                    )}
+                    {itgUrl ? (
+                      <a href={itgUrl} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-0.5 text-xs bg-green-50 text-green-700 border border-green-200 rounded px-1.5 py-0.5 font-medium hover:bg-green-100"
+                        title="Open in IT Glue">
+                        ITG <ExternalLink size={10} />
+                      </a>
+                    ) : asset.it_glue_config_id && (
+                      <span className="text-xs bg-green-50 text-green-700 rounded px-1.5 py-0.5 font-medium">ITG</span>
+                    )}
+                    {asset.auvik_device_id && (
+                      <span className="text-xs bg-purple-50 text-purple-700 rounded px-1.5 py-0.5 font-medium">Auvik</span>
                     )}
                   </div>
                 </div>
