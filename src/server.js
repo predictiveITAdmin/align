@@ -5,10 +5,19 @@ const cookieParser = require('cookie-parser')
 const helmet = require('helmet')
 const cors = require('cors')
 
-const healthRouter = require('./routes/health')
-const authRouter = require('./routes/auth')
-const clientsRouter = require('./routes/clients')
-const syncRouter = require('./routes/sync')
+const { tenantMiddleware } = require('./middleware/tenant')
+const { optionalAuth } = require('./middleware/auth')
+
+const healthRouter         = require('./routes/health')
+const authRouter           = require('./routes/auth')
+const clientsRouter        = require('./routes/clients')
+const syncRouter           = require('./routes/sync')
+const standardsRouter      = require('./routes/standards')
+const assessmentsRouter    = require('./routes/assessments')
+const recommendationsRouter = require('./routes/recommendations')
+const assetsRouter         = require('./routes/assets')
+const eosRouter            = require('./routes/eos')
+const csatRouter           = require('./routes/csat')
 
 const app = express()
 const server = createServer(app)
@@ -16,7 +25,7 @@ const server = createServer(app)
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }))
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://align.predictiveit.ai',
+  origin: (origin, cb) => cb(null, true), // Allow any origin (tenant domains vary)
   credentials: true,
 }))
 app.use(express.json({ limit: '10mb' }))
@@ -34,11 +43,21 @@ app.use((req, res, next) => {
   next()
 })
 
+// ─── Tenant + Auth (runs on all /api routes except health) ───────────────────
+app.use('/api', tenantMiddleware)
+app.use('/api', optionalAuth)
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api/health', healthRouter)
 app.use('/api/auth', authRouter)
 app.use('/api/clients', clientsRouter)
 app.use('/api/sync', syncRouter)
+app.use('/api/standards', standardsRouter)
+app.use('/api/assessments', assessmentsRouter)
+app.use('/api/recommendations', recommendationsRouter)
+app.use('/api/assets', assetsRouter)
+app.use('/api/eos', eosRouter)
+app.use('/api/csat', csatRouter)
 
 // ─── 404 fallback ────────────────────────────────────────────────────────────
 app.use('/api/*', (req, res) => {
