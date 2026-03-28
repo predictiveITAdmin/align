@@ -6,9 +6,10 @@ const db = require('../db')
 router.get('/', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, name, autotask_company_id, is_active,
-              alignment_score, last_assessment_at, last_qbr_at,
-              created_at, updated_at
+      `SELECT id, name, autotask_company_id, website, phone,
+              city, state, is_active, health_score,
+              assigned_vcio_id, assigned_tam_id,
+              last_synced_at, created_at, updated_at
        FROM clients
        WHERE is_active = true
        ORDER BY name`

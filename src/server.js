@@ -7,6 +7,7 @@ const cors = require('cors')
 
 const healthRouter = require('./routes/health')
 const clientsRouter = require('./routes/clients')
+const syncRouter = require('./routes/sync')
 
 const app = express()
 const server = createServer(app)
@@ -35,6 +36,7 @@ app.use((req, res, next) => {
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api/health', healthRouter)
 app.use('/api/clients', clientsRouter)
+app.use('/api/sync', syncRouter)
 
 // ─── 404 fallback ────────────────────────────────────────────────────────────
 app.use('/api/*', (req, res) => {
