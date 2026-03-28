@@ -11,12 +11,14 @@
   "dependencies": {
     "@azure/msal-node": "^5.1.1",
     "axios": "^1.7.9",
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "xml2js": "^0.6.2"
   }
 }
