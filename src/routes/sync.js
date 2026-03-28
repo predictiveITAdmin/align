@@ -9,6 +9,7 @@ const { syncDattoRmm } = require('../services/dattoRmmSync')
 const { syncItGlue } = require('../services/itGlueSync')
 const { syncSaasAlerts } = require('../services/saasAlertsSync')
 const { syncAuvik } = require('../services/auvikSync')
+const { syncContacts } = require('../services/autotaskContactsSync')
 const db = require('../db')
 
 // Helper to get tenant ID (uses req.tenant from middleware, falls back to predictiveit)
@@ -135,6 +136,19 @@ router.post('/auvik', async (req, res) => {
   }
 })
 
+// POST /api/sync/contacts — Autotask contacts sync
+router.post('/contacts', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncContacts(tenantId)
+    res.json({ status: 'ok', source: 'autotask', entity: 'contacts', ...result })
+  } catch (err) {
+    console.error('[sync] contacts error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/sync/all — run all syncs sequentially
 router.post('/all', async (req, res) => {
   try {
@@ -151,6 +165,7 @@ router.post('/all', async (req, res) => {
     results.itGlue = await syncItGlue(tenantId)
     results.saasAlerts = await syncSaasAlerts(tenantId)
     results.auvik = await syncAuvik(tenantId)
+    results.contacts = await syncContacts(tenantId)
 
     res.json({ status: 'ok', results })
   } catch (err) {

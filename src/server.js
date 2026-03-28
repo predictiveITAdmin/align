@@ -20,6 +20,8 @@ const eosRouter            = require('./routes/eos')
 const csatRouter           = require('./routes/csat')
 const integrationsRouter   = require('./routes/integrations')
 const feedbackRouter       = require('./routes/feedback')
+const contactsRouter       = require('./routes/contacts')
+const saasLicensesRouter   = require('./routes/saas-licenses')
 
 const app = express()
 const server = createServer(app)
@@ -62,6 +64,8 @@ app.use('/api/eos', eosRouter)
 app.use('/api/csat', csatRouter)
 app.use('/api/integrations', integrationsRouter)
 app.use('/api/feedback', feedbackRouter)
+app.use('/api/contacts', contactsRouter)
+app.use('/api/saas-licenses', saasLicensesRouter)
 
 // ─── 404 fallback ────────────────────────────────────────────────────────────
 app.use('/api/*', (req, res) => {

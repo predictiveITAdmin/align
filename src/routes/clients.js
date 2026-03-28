@@ -48,7 +48,7 @@ router.get('/:id', async (req, res) => {
       `SELECT c.*,
         (SELECT count(*) FROM assets a WHERE a.client_id = c.id) as asset_count,
         (SELECT count(*) FROM assets a WHERE a.client_id = c.id AND a.warranty_expiry < NOW()) as expired_warranty_count,
-        (SELECT count(*) FROM recommendations r WHERE r.client_id = c.id AND r.status NOT IN ('completed','rejected')) as open_rec_count,
+        (SELECT count(*) FROM recommendations r WHERE r.client_id = c.id AND r.status NOT IN ('completed','declined')) as open_rec_count,
         (SELECT count(*) FROM assessments a2 WHERE a2.client_id = c.id) as assessment_count,
         (SELECT count(*) FROM eos_rocks r WHERE r.client_id = c.id AND r.status != 'completed') as active_rocks,
         (SELECT ROUND(

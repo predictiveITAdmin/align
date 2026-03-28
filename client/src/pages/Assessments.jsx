@@ -37,7 +37,7 @@ export default function Assessments() {
     try {
       const res = await api.post('/assessments', {
         client_id: newClientId,
-        title: newTitle || 'Technology Alignment Assessment',
+        name: newTitle || 'Technology Alignment Assessment',
       })
       navigate(`/assessments/${res.data.id}`)
     } catch (err) {
@@ -130,7 +130,7 @@ export default function Assessments() {
                       {a.client_name?.charAt(0)}
                     </div>
                     <div>
-                      <h3 className="text-sm font-semibold text-gray-900">{a.title || 'Assessment'}</h3>
+                      <h3 className="text-sm font-semibold text-gray-900">{a.name || 'Assessment'}</h3>
                       <p className="text-xs text-gray-500">{a.client_name}</p>
                     </div>
                   </div>

@@ -77,14 +77,14 @@ router.get('/:id', async (req, res) => {
 
 // POST /api/assessments — create a new assessment for a client
 router.post('/', requireAuth, requireRole('tenant_admin', 'vcio', 'tam'), async (req, res) => {
-  const { client_id, title, notes } = req.body
+  const { client_id, title, name, notes } = req.body
   try {
     // Create the assessment
     const assessment = await db.query(
-      `INSERT INTO assessments (tenant_id, client_id, title, conducted_by, status, notes)
+      `INSERT INTO assessments (tenant_id, client_id, name, conducted_by, status, summary)
        VALUES ($1, $2, $3, $4, 'draft', $5)
        RETURNING *`,
-      [req.tenant.id, client_id, title || 'New Assessment', req.user.sub, notes || null]
+      [req.tenant.id, client_id, name || title || 'New Assessment', req.user.sub, notes || null]
     )
 
     const assessmentId = assessment.rows[0].id
@@ -142,7 +142,7 @@ router.post('/:id/complete', requireAuth, async (req, res) => {
       `UPDATE assessments SET
         status = 'completed',
         overall_score = $2,
-        completed_at = NOW(),
+        assessment_date = COALESCE(assessment_date, NOW()::date),
         updated_at = NOW()
        WHERE id = $1 AND tenant_id = $3
        RETURNING *`,
