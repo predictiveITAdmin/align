@@ -117,40 +117,47 @@ async function syncAssets(tenantId) {
       ) || 'Other'
       const assetTypeId = typeMap[typeName] || typeMap['Other'] || null
 
+      const hostname = item.rmmDeviceAuditHostname || null
+      const ipRaw = item.rmmDeviceAuditIPAddress || null
+      const ipAddress = ipRaw && /^\d{1,3}(\.\d{1,3}){3}$/.test(ipRaw) ? ipRaw : null
+      const macRaw = item.rmmDeviceAuditMacAddress || null
+      const macAddress = macRaw && /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(macRaw) ? macRaw : null
+
       const result = await db.query(
         `INSERT INTO assets (
-          tenant_id, client_id, asset_type_id, name, hostname,
-          serial_number, manufacturer, model, operating_system,
-          warranty_expiry, installed_at, is_active,
-          external_id, external_source, metadata, last_synced_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'autotask',$14,NOW())
-        ON CONFLICT (tenant_id, external_source, external_id)
+          tenant_id, client_id, asset_type_id, name,
+          serial_number, operating_system,
+          ip_address, mac_address,
+          warranty_expiry, purchase_date, is_active,
+          primary_source, autotask_ci_id, autotask_data, last_seen_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7::inet,$8::macaddr,$9,$10,$11,'autotask',$12,$13,NOW())
+        ON CONFLICT (tenant_id, autotask_ci_id) WHERE autotask_ci_id IS NOT NULL
         DO UPDATE SET
           client_id = EXCLUDED.client_id,
           asset_type_id = EXCLUDED.asset_type_id,
           name = EXCLUDED.name,
-          hostname = EXCLUDED.hostname,
           serial_number = EXCLUDED.serial_number,
+          operating_system = EXCLUDED.operating_system,
+          ip_address = EXCLUDED.ip_address,
           warranty_expiry = EXCLUDED.warranty_expiry,
           is_active = EXCLUDED.is_active,
-          metadata = EXCLUDED.metadata,
-          last_synced_at = NOW(),
+          autotask_data = EXCLUDED.autotask_data,
+          last_seen_at = NOW(),
           updated_at = NOW()
         RETURNING (xmax = 0) AS is_insert`,
         [
           tenantId,
           clientId,
           assetTypeId,
-          item.referenceTitle || item.rmmDeviceAuditHostname || `Asset ${item.id}`,
-          item.rmmDeviceAuditHostname || null,
+          item.referenceTitle || hostname || `Asset ${item.id}`,
           item.serialNumber || null,
-          null, // manufacturer — would need picklist lookup
-          null, // model — would need picklist lookup
           item.rmmDeviceAuditOperatingSystem || null,
+          ipAddress,
+          macAddress,
           item.warrantyExpirationDate || null,
           item.installDate || null,
           item.isActive,
-          String(item.id),
+          item.id,
           JSON.stringify(item),
         ]
       )

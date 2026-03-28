@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
     }
     if (search) {
       params.push(`%${search}%`)
-      query += ` AND (a.name ILIKE $${params.length} OR a.hostname ILIKE $${params.length} OR a.serial_number ILIKE $${params.length})`
+      query += ` AND (a.name ILIKE $${params.length} OR a.serial_number ILIKE $${params.length})`
     }
 
     query += ` ORDER BY a.name LIMIT 500`
