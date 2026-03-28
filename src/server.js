@@ -6,6 +6,7 @@ const helmet = require('helmet')
 const cors = require('cors')
 
 const healthRouter = require('./routes/health')
+const authRouter = require('./routes/auth')
 const clientsRouter = require('./routes/clients')
 const syncRouter = require('./routes/sync')
 
@@ -35,6 +36,7 @@ app.use((req, res, next) => {
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api/health', healthRouter)
+app.use('/api/auth', authRouter)
 app.use('/api/clients', clientsRouter)
 app.use('/api/sync', syncRouter)
 

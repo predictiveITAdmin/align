@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '../lib/cn'
+import { useAuth } from '../hooks/useAuth'
 
 const navItems = [
   { to: '/',               icon: LayoutDashboard, label: 'Dashboard' },
@@ -32,6 +33,7 @@ const navItems = [
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
+  const { user, logout } = useAuth()
 
   return (
     <aside
@@ -42,11 +44,15 @@ export default function Sidebar() {
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-16 border-b border-white/10">
-        <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
+        <div className="w-8 h-8 bg-accent-500 rounded-lg flex items-center justify-center font-bold text-sm text-white shrink-0">
           A
         </div>
         {!collapsed && (
-          <span className="font-semibold text-lg tracking-tight">Align</span>
+          <div className="flex items-baseline gap-0.5">
+            <span className="font-semibold text-lg tracking-tight text-white">predictive</span>
+            <span className="font-bold text-lg tracking-tight text-accent-500">IT</span>
+            <span className="text-xs text-primary-300 ml-1.5 font-medium">Align</span>
+          </div>
         )}
       </div>
 
@@ -72,8 +78,14 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Settings + Collapse */}
+      {/* User + Settings + Collapse */}
       <div className="border-t border-white/10 py-2">
+        {user && !collapsed && (
+          <div className="px-4 py-2 mb-1">
+            <p className="text-xs text-gray-400 truncate">{user.display_name}</p>
+            <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
+          </div>
+        )}
         <NavLink
           to="/settings"
           className={({ isActive }) =>
@@ -88,6 +100,13 @@ export default function Sidebar() {
           <Settings size={20} className="shrink-0" />
           {!collapsed && <span>Settings</span>}
         </NavLink>
+        <button
+          onClick={logout}
+          className="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-gray-400 hover:bg-sidebar-hover hover:text-white w-[calc(100%-1rem)] transition-colors"
+        >
+          <ChevronLeft size={20} className="shrink-0" />
+          {!collapsed && <span>Sign Out</span>}
+        </button>
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-gray-400 hover:bg-sidebar-hover hover:text-white w-[calc(100%-1rem)] transition-colors"
