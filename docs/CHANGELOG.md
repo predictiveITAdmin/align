@@ -18,6 +18,24 @@ implements it.
 
 ---
 
+## 2026-04-21 — Distributor API research
+
+- Added `docs/distributor-api-research.md` with complete findings and
+  action plan per distributor.
+- **Verdict:** Ingram Micro Xvantage is the cleanest API and should be
+  built first. OpenAPI spec + Node SDK + webhooks + 2-day approval.
+- TD Synnex is workable but needs email to `helpdeskus@tdsynnex.com`
+  for API registration. Two platforms — use ECExpress/Digital Bridge
+  for HARDWARE, skip StreamOne ION (software only).
+- Amazon Business has 4-6 week onboarding lead — needs to start now
+  if we want it in the MVP timeline. Alternative: manual CSV import.
+- Provantage has NO public API. Needs direct partner outreach or we
+  handle manually in v1.
+- QuickBooks Online has clean OAuth2 + native Node SDK, can start QBO
+  integration as soon as Intuit dev account is created.
+- Jason's action list (~30-45 min total): sign up developer portals +
+  send helpdesk email + decide Amazon path + contact Provantage rep.
+
 ## 2026-04-21 — Order Management (new module)
 
 - **NEW module spec.** Requirements locked. `docs/order-management-spec.md`.

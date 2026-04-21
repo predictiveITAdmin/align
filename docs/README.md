@@ -25,6 +25,7 @@ read in this order:
 | Doc | Purpose |
 |---|---|
 | [`api-integrations.md`](./api-integrations.md) | All 9 external API connections (auth, endpoints, record counts) |
+| [`distributor-api-research.md`](./distributor-api-research.md) | Hardware distributor API research + access game plan |
 | [`active-customers-only.md`](./active-customers-only.md) | Sync filter rule (applies to every sync service) |
 | [`adr/`](./adr/) | Architecture Decision Records (numbered, append-only) |
 
