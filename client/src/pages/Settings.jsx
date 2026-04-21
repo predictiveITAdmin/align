@@ -2762,6 +2762,281 @@ function SoftwareCatalogTab() {
   )
 }
 
+// ─── Suppliers Tab (Order Management — distributor API configuration) ─────────
+
+function SuppliersTab() {
+  const [adapters, setAdapters] = useState([])
+  const [suppliers, setSuppliers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(null)  // { adapter, supplier? }
+  const [testResult, setTestResult] = useState(null)
+  const [testing, setTesting] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const [adRes, spRes] = await Promise.all([
+        api.get('/suppliers/adapters'),
+        api.get('/suppliers'),
+      ])
+      setAdapters(adRes.data || [])
+      setSuppliers(spRes.data || [])
+    } catch (e) { console.error(e) } finally { setLoading(false) }
+  }
+
+  useEffect(() => { load() }, [])
+
+  function openConfigure(adapter, supplier = null) {
+    setEditing({ adapter, supplier })
+    setTestResult(null)
+  }
+
+  async function handleTest() {
+    if (!editing?.supplier?.id) {
+      alert('Save the supplier first, then test the connection.')
+      return
+    }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await api.post(`/suppliers/${editing.supplier.id}/test`, {})
+      setTestResult(res.data)
+      await load()  // refresh last_test_status
+    } catch (err) {
+      setTestResult({ ok: false, message: err.message })
+    } finally { setTesting(false) }
+  }
+
+  async function handleSave(formValues) {
+    try {
+      const res = await api.post('/suppliers', {
+        adapter_key:            editing.adapter.adapter_key,
+        display_name:           formValues.display_name || editing.adapter.display_name,
+        is_enabled:             formValues.is_enabled ?? false,
+        sync_mode:              formValues.sync_mode,
+        sync_frequency_minutes: formValues.sync_frequency_minutes || 60,
+        customer_number:        formValues.customer_number || null,
+        environment:            formValues.environment || 'production',
+        base_url:               formValues.base_url || null,
+        credentials:            formValues.credentials || {},
+      })
+      setEditing({ adapter: editing.adapter, supplier: res.data })
+      await load()
+    } catch (err) {
+      alert('Save failed: ' + err.message)
+    }
+  }
+
+  if (loading) return <div className="text-center py-10 text-gray-400">Loading suppliers…</div>
+
+  return (
+    <div>
+      <PageHeader
+        title="Suppliers / Distributors"
+        description="Configure distributor APIs for the Order Management module. Credentials are encrypted at rest."
+      />
+
+      {/* List of adapters */}
+      <div className="space-y-3 mt-4">
+        {adapters.map(adapter => {
+          const existing = suppliers.find(s => s.adapter_key === adapter.adapter_key)
+          return (
+            <div key={adapter.adapter_key}
+              className="bg-white border border-gray-200 rounded-xl p-4 flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-1">
+                  <h3 className="text-sm font-semibold text-gray-900">{adapter.display_name}</h3>
+                  {existing ? (
+                    <>
+                      {existing.is_enabled
+                        ? <span className="inline-flex items-center gap-1 text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full"><Check size={10}/> Enabled</span>
+                        : <span className="inline-flex items-center gap-1 text-xs bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full">Disabled</span>}
+                      {existing.last_test_status === 'ok'
+                        ? <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full"><CheckCircle2 size={10}/> Connected</span>
+                        : existing.last_test_status === 'failed'
+                          ? <span className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded-full"><AlertCircle size={10}/> Connection failed</span>
+                          : <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">Untested</span>}
+                    </>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-xs bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full">Not configured</span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500">
+                  {adapter.supported_sync_modes.join(' · ')}
+                  {existing && ` · Env: ${existing.environment}`}
+                  {existing?.last_sync_at && ` · Last sync: ${fmtRelative(existing.last_sync_at)}`}
+                  {existing?.last_test_at && ` · Last test: ${fmtRelative(existing.last_test_at)}`}
+                </p>
+                {existing?.last_test_error && (
+                  <p className="text-xs text-red-600 mt-1 font-mono">{existing.last_test_error}</p>
+                )}
+              </div>
+              <button onClick={() => openConfigure(adapter, existing)}
+                className="px-3 py-1.5 text-sm font-medium text-primary-600 border border-primary-200 rounded-lg hover:bg-primary-50 transition-colors whitespace-nowrap">
+                {existing ? 'Configure' : 'Set up'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {editing && (
+        <SupplierConfigDrawer
+          adapter={editing.adapter}
+          supplier={editing.supplier}
+          onSave={handleSave}
+          onTest={handleTest}
+          testing={testing}
+          testResult={testResult}
+          onClose={() => { setEditing(null); setTestResult(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function SupplierConfigDrawer({ adapter, supplier, onSave, onTest, testing, testResult, onClose }) {
+  const [form, setForm] = useState(() => ({
+    display_name:           supplier?.display_name || adapter.display_name,
+    is_enabled:             supplier?.is_enabled ?? false,
+    sync_mode:              supplier?.sync_mode || adapter.supported_sync_modes[0],
+    sync_frequency_minutes: supplier?.sync_frequency_minutes || 60,
+    customer_number:        supplier?.customer_number || '',
+    environment:            supplier?.environment || adapter.defaults?.environment || 'production',
+    base_url:               supplier?.base_url || adapter.defaults?.base_url || '',
+    credentials:            {},  // user enters fresh values; masked ones stay as ••••
+  }))
+  const [saving, setSaving] = useState(false)
+
+  function updateField(field, value) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
+
+  function updateCred(name, value) {
+    setForm(f => ({ ...f, credentials: { ...f.credentials, [name]: value } }))
+  }
+
+  async function handleSaveClick() {
+    setSaving(true)
+    try { await onSave(form) } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex justify-end">
+        <div className="bg-white w-full max-w-lg h-full overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between z-10">
+            <h2 className="text-base font-semibold text-gray-900">{adapter.display_name}</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
+          </div>
+
+          <div className="px-6 py-5 space-y-5">
+            {/* Enable toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Enable this supplier</p>
+                <p className="text-xs text-gray-500">Only enabled suppliers are included in the hourly sync.</p>
+              </div>
+              <Toggle value={form.is_enabled} onChange={v => updateField('is_enabled', v)} />
+            </div>
+
+            {/* Sync mode */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Sync Mode</label>
+              <select value={form.sync_mode} onChange={e => updateField('sync_mode', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white">
+                {adapter.supported_sync_modes.map(m => (
+                  <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Environment (for API mode) */}
+            {form.sync_mode === 'api' && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Environment</label>
+                <div className="flex gap-2">
+                  {['sandbox', 'production'].map(env => (
+                    <button key={env} onClick={() => updateField('environment', env)}
+                      className={`flex-1 px-3 py-2 text-sm rounded-lg border ${
+                        form.environment === env ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                      }`}>
+                      {env}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Customer Number */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Customer Number</label>
+              <input type="text" value={form.customer_number} onChange={e => updateField('customer_number', e.target.value)}
+                placeholder="e.g. 70-797941"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            </div>
+
+            {/* Dynamic credential fields based on adapter.required_fields */}
+            {(adapter.required_fields || []).map(field => {
+              if (field.name === 'customer_number') return null  // already rendered above
+              const storedMasked = supplier?.credentials?.[field.name]
+              return (
+                <div key={field.name}>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                    {field.label}
+                    {field.secret && <span className="ml-1 text-xs text-gray-400 font-normal">(encrypted)</span>}
+                  </label>
+                  <input
+                    type={field.secret ? 'password' : (field.type === 'text' ? 'text' : field.type)}
+                    value={form.credentials[field.name] ?? ''}
+                    onChange={e => updateCred(field.name, e.target.value)}
+                    placeholder={storedMasked || field.help || ''}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono" />
+                  {field.help && <p className="text-xs text-gray-400 mt-1">{field.help}</p>}
+                </div>
+              )
+            })}
+
+            {/* Test result */}
+            {testResult && (
+              <div className={`px-3 py-2 rounded-lg border text-sm ${
+                testResult.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                              : 'bg-red-50 border-red-200 text-red-800'
+              }`}>
+                <div className="flex items-center gap-2 font-medium">
+                  {testResult.ok ? <CheckCircle2 size={14}/> : <AlertCircle size={14}/>}
+                  {testResult.ok ? 'Connected' : 'Failed'}
+                </div>
+                <p className="text-xs mt-1">{testResult.message}</p>
+                {testResult.details && (
+                  <pre className="text-xs mt-1 overflow-auto max-h-28 font-mono">{JSON.stringify(testResult.details, null, 2)}</pre>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Action bar */}
+          <div className="sticky bottom-0 bg-white border-t border-gray-100 px-6 py-4 flex items-center justify-between">
+            <button onClick={onTest} disabled={testing || !supplier?.id}
+              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              {testing ? 'Testing…' : 'Test Connection'}
+            </button>
+            <div className="flex gap-2">
+              <button onClick={onClose}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">Close</button>
+              <button onClick={handleSaveClick} disabled={saving}
+                className="px-4 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50">
+                {saving ? 'Saving…' : supplier ? 'Update' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ─── Root Settings page ────────────────────────────────────────────────────────
 
 const TABS = [
@@ -2774,6 +3049,7 @@ const TABS = [
   { id: 'warranty-lookup',  label: 'Warranty Lookup' },
   { id: 'integrations',     label: 'Integrations' },
   { id: 'integration-setup', label: 'Integration Setup' },
+  { id: 'suppliers',        label: 'Suppliers (Order Mgmt)' },
   { id: 'verticals',        label: 'Verticals' },
   { id: 'lob-apps',         label: 'LOB Applications' },
   { id: 'software-catalog', label: 'Software Catalog' },
@@ -2816,6 +3092,7 @@ export default function Settings() {
           {activeTab === 'warranty-lookup'  && <WarrantyLookupTab />}
           {activeTab === 'integrations'      && <IntegrationsTab />}
           {activeTab === 'integration-setup' && <IntegrationSetupTab />}
+          {activeTab === 'suppliers'         && <SuppliersTab />}
           {activeTab === 'verticals'         && <VerticalsTab />}
           {activeTab === 'lob-apps'          && <LobAppsTab />}
           {activeTab === 'software-catalog'  && <SoftwareCatalogTab />}

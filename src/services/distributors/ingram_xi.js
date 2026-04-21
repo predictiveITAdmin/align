@@ -62,9 +62,10 @@ async function getToken(creds, config) {
   const cached = _tokenCache.get(key)
   if (cached && cached.expires_at > Date.now() + 60_000) return cached.access_token
 
-  const base = config.environment === 'sandbox' ? SANDBOX_BASE : PROD_BASE
+  // Per Ingram docs: OAuth token endpoint is the SAME for sandbox + production.
+  // Only the API data calls go to different base paths.
   const res = await axios.post(
-    `${base}${TOKEN_PATH}`,
+    `${PROD_BASE}${TOKEN_PATH}`,
     new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: creds.client_id,
