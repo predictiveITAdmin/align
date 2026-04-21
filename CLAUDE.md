@@ -4,6 +4,32 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 
 ---
 
+## 🎯 Current Focus (2026-04-21)
+
+**Active:** Order Management module — see [`docs/order-management-spec.md`](./docs/order-management-spec.md).
+Requirements locked, distributor API research is the next step (Ingram Micro, TD Synnex, Provantage, Amazon Business — hardware only, not software).
+
+**Recently shipped (Phase 4 — standards + assessments):**
+- 1,387 MyITProcess standards imported as drafts (see `scripts/standards_import/`)
+- 8 cross-framework merges executed (Incident response now tagged across HIPAA, ISO, NIST, PCI-DSS simultaneously)
+- Framework Gap assessment type + answer inheritance (answer once → satisfy many frameworks)
+- Response modes: binary / ternary / graded / informational — 4,376 responses sized to control type
+- Per-client review cadence setting, onboarding phase 1/2, recurring reviews
+- Committed: `ddca220` (Phase 4), `b973433` (docs reorg), `1296dfd` (import scripts), `9777f2a` (order mgmt spec)
+
+## 📦 Parked — resume when ready
+
+- **Approve 1,379 imported standards drafts** in the Standards page UI. Bulk-approve by section is fastest. CMMC / PCI-DSS / ISO sections are safe to bulk-approve (authoritative content), NIST CSF + HIPAA deserve closer review.
+- **Second-pass dedup review complete** — 1 very-likely + 7 probable merges executed; 16 possible (75-79%) still in `/tmp/standards_import/dedup_second_pass.md` if you want a third pass.
+
+## 💾 Backups
+
+- pg_dump snapshots in `~/backups/align/` (Apr 21 2026 post-Phase-4)
+- All code pushed to GitHub `predictiveITAdmin/align` (main branch)
+- Import pipeline preserved at `scripts/standards_import/` (versioned)
+
+---
+
 ## Repo Layout
 
 ```
@@ -92,8 +118,10 @@ ScalePad, MyITProcess, Autotask, Datto RMM, IT Glue, SaaS Alerts, Auvik, Custome
 
 - [`docs/product-spec.md`](./docs/product-spec.md) — full product + architecture spec
 - [`docs/phase-4-assessments.md`](./docs/phase-4-assessments.md) — assessment module design (onboarding phases + review cycles)
+- [`docs/order-management-spec.md`](./docs/order-management-spec.md) — Order Management module (Autotask Opps/Quotes + distributor sync + QBO + client portal)
 - [`docs/api-integrations.md`](./docs/api-integrations.md) — all 9 API connections with auth + endpoints
 - [`docs/active-customers-only.md`](./docs/active-customers-only.md) — sync filter rule
+- [`scripts/standards_import/README.md`](./scripts/standards_import/README.md) — MyITProcess standards import pipeline
 - [`README.md`](./README.md), [`ROADMAP.md`](./ROADMAP.md)
 
 ---
