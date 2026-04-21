@@ -18,6 +18,56 @@ implements it.
 
 ---
 
+## 2026-04-21 — Order Management Phase A backend shipped
+
+Complete backend scaffolding for Order Management module, ready for frontend work:
+
+- Migration `src/migrations/order_management_001.sql` — 9 new tables:
+  opportunities, quotes, quote_items, suppliers, distributor_orders,
+  distributor_order_items, order_events, order_receipts, order_item_assignments.
+  pgcrypto extension enabled for credential encryption.
+- `src/services/opportunitiesSync.js` — pulls Autotask Opportunities,
+  Quotes, QuoteItems. Parses PO text field to array (ADR-003).
+  Exports `appendPoToAutotask()` for PO Mapper writeback.
+- `src/services/supplierCrypto.js` — AES-256-GCM encryption for
+  supplier credentials (ALIGN_ENCRYPTION_KEY env var, falls back to
+  derived from JWT_SECRET for dev).
+- `src/services/distributors/` — adapter framework with common
+  interface (testConnection, fetchOrders, fetchOrder, handleWebhook,
+  requiredFields schema). Normalized order shape and status enum
+  (constants.js) shared across adapters.
+  - `ingram_xi.js` — LIVE implementation (OAuth2, paginated orders,
+    webhook handler, status normalization). Pending valid creds to test.
+  - `tdsynnex_ecx.js` — stub, awaiting API registration
+  - `amazon_business_csv.js` — CSV parser for Shipments report
+  - `provantage_manual.js` — manual-entry mode only
+- `src/routes/opportunities.js` — /api/opportunities (list, detail,
+  sync trigger, sync status)
+- `src/routes/suppliers.js` — /api/suppliers (list adapters, CRUD,
+  test connection with masked secrets)
+- `src/routes/orders.js` — /api/orders (list, stats, detail, map/unmap
+  with Autotask PO writeback)
+
+Encryption key recommendation: set `ALIGN_ENCRYPTION_KEY=<64 hex chars>`
+in `.env` for production (dev falls back to JWT_SECRET-derived key).
+
+## 2026-04-21 — Supplier API Admin module added to Order Mgmt spec
+
+- New "Supplier API" module under the Admin tab. Per-tenant distributor
+  configuration UI with encrypted credentials, sync settings, and a
+  "Test Connection" button.
+- Schema: `suppliers` table — adapter_key, credentials jsonb (encrypted),
+  sync mode/frequency, webhook URL + secret, last test/sync status.
+- Generic adapter interface (`DistributorAdapter` base class) — each
+  distributor implements testConnection/fetchOrders/fetchOrder/handleWebhook.
+  Admin UI renders form fields dynamically from `requiredFields` schema.
+- CSV import mode for distributors without APIs (Amazon Business v1,
+  Provantage fallback).
+- Encrypted credentials storage (pgcrypto or app-level), masked in UI
+  except during edit, rotation reminders at 90 days.
+- Enables future distributors to ship as an adapter module + registry
+  entry, no UI code changes needed.
+
 ## 2026-04-21 — Distributor API research
 
 - Added `docs/distributor-api-research.md` with complete findings and

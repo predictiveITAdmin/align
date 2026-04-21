@@ -478,6 +478,123 @@ None blocking — requirements locked. Remaining questions will surface during
 distributor API research (auth quirks, rate limits, which endpoints actually
 expose what we need).
 
+## Supplier API Admin Module (configuration + test/verify)
+
+A generic integration configuration module under the **Admin tab** for
+per-tenant distributor API settings. Every supplier (distributor) has a
+row with its credentials, endpoints, and a **"Test Connection"** button.
+
+### Why this pattern
+- Credentials stay in the DB per-tenant, not hardcoded in `.env`
+- Easy to enable/disable a distributor without code changes
+- Self-service setup for MSP admins (no developer round-trip)
+- Test button catches auth misconfigurations before sync runs
+- Pattern extends cleanly for future distributors (D&H, Arrow, ScanSource…)
+
+### Schema
+
+```
+suppliers
+  id uuid PK
+  tenant_id uuid
+  adapter_key text                     ← 'ingram_xi' | 'tdsynnex_ecx' |
+                                         'amazon_business_csv' | 'provantage_manual'
+  display_name text                    ← "Ingram Micro (Xvantage)"
+  is_enabled bool DEFAULT false
+  sync_mode text                       ← 'api' | 'webhook' | 'csv_import' | 'manual'
+  sync_frequency_minutes int           ← default 60
+  customer_number text                 ← distributor's customer/account ID
+  credentials jsonb                    ← encrypted per-adapter field map
+                                         (client_id, client_secret, api_key, etc.)
+  base_url text                        ← override if needed
+  environment text                     ← 'sandbox' | 'production'
+  webhook_url text                     ← where distributor POSTs events back
+  webhook_secret text                  ← shared secret for signature verification
+  last_test_at timestamptz
+  last_test_status text                ← 'ok' | 'failed'
+  last_test_error text
+  last_sync_at timestamptz
+  last_sync_error text
+  created_at, updated_at
+  UNIQUE (tenant_id, adapter_key)
+```
+
+### Credentials storage
+- `credentials` JSONB field is encrypted at rest (symmetric encryption
+  with per-tenant key or a master key from `.env`)
+- Shape is adapter-specific — each adapter declares its required fields
+- Never logged, never returned in full in API responses (masked in UI)
+
+### Admin UI (under Admin tab)
+
+Route: `/admin/suppliers`
+
+List view:
+- Card per supplier with:
+  - Logo
+  - Display name
+  - Enabled toggle
+  - Status badge: ✅ Connected / ⚠ Error / ⏸ Disabled
+  - Last sync time + last test time
+  - "Configure" / "Test Connection" buttons
+
+Configure drawer/modal (per supplier):
+- Adapter-specific form fields (rendered from the adapter's field schema)
+- E.g., Ingram: customer_number, client_id, client_secret, environment
+- E.g., TD Synnex: customer_number, api_key, environment
+- E.g., Amazon Business: upload CSV area + optional scheduled-import config
+- Sync frequency slider (default hourly)
+- Webhook URL (readonly, generated per-supplier: `/api/webhooks/<adapter_key>/<supplier_id>`)
+- Webhook secret (auto-generated, copy-to-clipboard button, regenerate button)
+- Base URL override (advanced, usually leave default)
+- **"Test Connection" button** — runs the adapter's `testConnection()` method,
+  shows success/failure with error detail
+
+### Adapter interface (each distributor implements)
+
+```js
+// src/services/distributors/base.js
+class DistributorAdapter {
+  async testConnection(creds)        // returns { ok, message, details }
+  async fetchOrders(creds, since)    // returns [normalizedOrder, ...]
+  async fetchOrder(creds, id)        // returns normalizedOrder
+  async handleWebhook(payload, sig)  // handles inbound events
+  static requiredFields              // [{ name, label, type, secret, help }]
+  static displayName                 // 'Ingram Micro (Xvantage)'
+  static logo                        // URL or SVG
+  static supportedSyncModes          // ['api','webhook','csv_import','manual']
+}
+```
+
+Each distributor adapter file (`ingram.js`, `tdsynnex.js`, etc.) exports
+a class extending this. The admin UI reads `requiredFields` to render
+the form dynamically — so adding a new distributor is mostly the
+adapter module + a registry entry, no UI work.
+
+### CSV import mode (for Amazon Business + Provantage manual)
+
+For suppliers without APIs, the Supplier config form accepts CSV upload
+instead:
+- Drag-and-drop CSV file
+- Column mapping UI (auto-detects Amazon Business report columns)
+- "Parse & Import" button runs the import through the same matcher pipeline
+- Import history shows last N uploads with row counts + error logs
+
+This keeps all suppliers in one unified Orders view regardless of
+connection method.
+
+### Credential security best-practices
+
+- Encrypt the `credentials` JSONB column (pgcrypto or app-level before
+  insert)
+- Admin users can see field names but values are masked (show last 4
+  chars only) — full values shown only during edit after re-auth
+  confirmation
+- Rotation reminders: warn if `updated_at` on credentials > 90 days
+- Audit log: any change to a supplier's config writes an audit row
+
+---
+
 ## Related modules (dependencies)
 
 - **Autotask sync** — already exists for Companies, Contacts, Tickets. Extends
