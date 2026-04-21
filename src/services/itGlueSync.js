@@ -124,6 +124,7 @@ async function syncItGlue(tenantId) {
           params: {
             'filter[organization-status-id]': ACTIVE_ORG_STATUS_ID,
             'filter[organization-type-id]': CUSTOMER_ORG_TYPE_ID,
+            'filter[active]': 1,
             'page[number]': page,
             'page[size]': 200,
           },
@@ -165,7 +166,7 @@ async function syncItGlue(tenantId) {
     }
 
     // ─── Upsert configurations into assets ────────────────────────────────
-    let created = 0, updated = 0, skipped = 0
+    let created = 0, updated = 0, skipped = 0, markedInactive = 0
 
     for (const config of allConfigs) {
       const attrs = config.attributes || {}
@@ -175,6 +176,28 @@ async function syncItGlue(tenantId) {
 
       const configId = parseInt(config.id, 10)
       if (!configId) { skipped++; continue }
+
+      // ── Orphan detection ──────────────────────────────────────────────
+      // sync-active=false means IT Glue is no longer syncing this config
+      // from Datto RMM — device was decommissioned or removed from management.
+      // psa-integration may be 'enabled', null, or 'orphaned' depending on
+      // IT Glue version; rely only on sync-active=false as the signal.
+      const syncActive = attrs['sync-active']
+      const isOrphaned = syncActive === false
+
+      if (isOrphaned) {
+        // Mark existing asset inactive (only if it has no Datto RMM ID — don't
+        // override an active RMM device that happens to share this ITG config)
+        await db.query(
+          `UPDATE assets SET is_active = false, updated_at = NOW()
+           WHERE tenant_id = $1 AND it_glue_config_id = $2
+             AND datto_rmm_device_id IS NULL`,
+          [tenantId, configId]
+        )
+        markedInactive++
+        skipped++
+        continue
+      }
 
       const assetTypeId = resolveAssetType(attrs['configuration-type-name'])
 
@@ -202,6 +225,8 @@ async function syncItGlue(tenantId) {
       if (upsertResult.isNew) created++
       else updated++
     }
+
+    console.log(`[it-glue-sync] Marked ${markedInactive} orphaned configs as inactive`)
 
     if (syncLogId) {
       await db.query(

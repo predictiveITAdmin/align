@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const db = require('../db')
+const axios = require('axios')
 const { requireAuth, requireRole } = require('../middleware/auth')
 
 // All integration definitions — maps source_type to display info and required fields
@@ -23,7 +24,7 @@ const INTEGRATION_DEFS = {
     description: 'Live device monitoring, warranty dates, patch/AV status, UDFs',
     icon: 'monitor',
     category: 'RMM',
-    sync_entities: ['devices'],
+    sync_entities: ['devices', 'software'],
     credential_fields: [
       { key: 'api_url', label: 'API URL', type: 'text', placeholder: 'https://concord-api.centrastage.net', required: true },
       { key: 'api_key', label: 'API Key', type: 'text', required: true },
@@ -182,36 +183,117 @@ router.put('/:type', requireAuth, requireRole('tenant_admin', 'global_admin'), a
   }
 })
 
-// POST /api/integrations/:type/test — test an integration connection
-router.post('/:type/test', requireAuth, requireRole('tenant_admin', 'global_admin'), async (req, res) => {
+// POST /api/integrations/:type/test — test an integration connection (real API ping)
+router.post('/:type/test', async (req, res) => {
   const { type } = req.params
+  if (!INTEGRATION_DEFS[type]) return res.status(400).json({ error: `Unknown integration type: ${type}` })
 
-  if (!INTEGRATION_DEFS[type]) {
-    return res.status(400).json({ error: `Unknown integration type: ${type}` })
-  }
-
-  // Get stored credentials
-  const source = await db.query(
+  // Load stored credentials (per-tenant override), fall back to env vars
+  const sourceRow = await db.query(
     `SELECT credentials FROM sync_sources WHERE tenant_id = $1 AND source_type = $2`,
     [req.tenant.id, type]
   )
+  const stored = sourceRow.rows[0]?.credentials || {}
+  function c(key, envVar) { return stored[key] || (envVar ? process.env[envVar] : null) || null }
 
-  if (!source.rows.length) {
-    return res.status(400).json({ error: 'Integration not configured yet' })
+  try {
+    switch (type) {
+      case 'autotask': {
+        const zone = c('zone', 'AUTOTASK_ZONE') || 'webservices1'
+        const user = c('api_user', 'AUTOTASK_API_USER')
+        const secret = c('api_secret', 'AUTOTASK_API_SECRET')
+        const code = c('integration_code', 'AUTOTASK_INTEGRATION_CODE')
+        if (!user || !secret) return res.json({ status: 'error', message: 'Missing API credentials (env: AUTOTASK_API_USER / AUTOTASK_API_SECRET)' })
+        const r = await axios.post(
+          `https://${zone}.autotask.net/ATServicesRest/V1.0/ConfigurationItems/query`,
+          { filter: [{ field: 'id', op: 'gt', value: 0 }], maxRecords: 1 },
+          { headers: { ApiIntegrationCode: code, UserName: user, Secret: secret, 'Content-Type': 'application/json' }, timeout: 10000 }
+        )
+        const count = r.data?.items?.length ?? '?'
+        return res.json({ status: 'ok', message: `Connected — Autotask PSA responding (${count} sample records)` })
+      }
+
+      case 'datto_rmm': {
+        const apiUrl = c('api_url', 'DATTO_RMM_API_URL')
+        const apiKey = c('api_key', 'DATTO_RMM_API_KEY')
+        const apiSecret = c('api_secret', 'DATTO_RMM_API_SECRET')
+        if (!apiUrl || !apiKey) return res.json({ status: 'error', message: 'Missing API credentials (env: DATTO_RMM_API_URL / DATTO_RMM_API_KEY)' })
+        const tokenRes = await axios.post(
+          `${apiUrl}/auth/oauth/token`,
+          `grant_type=password&username=${encodeURIComponent(apiKey)}&password=${encodeURIComponent(apiSecret)}`,
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+        )
+        if (!tokenRes.data.access_token) return res.json({ status: 'error', message: 'Token request succeeded but no access_token returned' })
+        return res.json({ status: 'ok', message: 'Connected — Datto RMM OAuth token acquired' })
+      }
+
+      case 'it_glue': {
+        const apiKey = c('api_key', 'IT_GLUE_API_KEY')
+        const baseUrl = c('base_url', 'IT_GLUE_BASE_URL') || 'https://api.itglue.com'
+        if (!apiKey) return res.json({ status: 'error', message: 'Missing API key (env: IT_GLUE_API_KEY)' })
+        const r = await axios.get(`${baseUrl}/organizations?page[size]=1`, {
+          headers: { 'x-api-key': apiKey, 'Content-Type': 'application/vnd.api+json' }, timeout: 10000
+        })
+        const count = r.data?.meta?.total_count ?? '?'
+        return res.json({ status: 'ok', message: `Connected — IT Glue responding (${count} organizations)` })
+      }
+
+      case 'scalepad': {
+        const apiKey = c('api_key', 'SCALEPAD_API_KEY')
+        if (!apiKey) return res.json({ status: 'error', message: 'Missing API key (env: SCALEPAD_API_KEY)' })
+        const r = await axios.get('https://api.scalepad.com/v2/companies', {
+          headers: { Authorization: `Bearer ${apiKey}` }, timeout: 10000,
+          params: { page: 1, per_page: 1 }
+        })
+        return res.json({ status: 'ok', message: `Connected — ScalePad API responding` })
+      }
+
+      case 'myitprocess': {
+        const apiKey = c('api_key', 'MYITPROCESS_API_KEY')
+        if (!apiKey) return res.json({ status: 'error', message: 'Missing API key (env: MYITPROCESS_API_KEY)' })
+        await axios.get('https://api.myitprocess.com/v1/clients', {
+          headers: { 'x-api-key': apiKey }, timeout: 10000,
+          params: { pageNumber: 1, pageSize: 1 }
+        })
+        return res.json({ status: 'ok', message: 'Connected — MyITProcess API responding' })
+      }
+
+      case 'saas_alerts': {
+        const apiKey = c('api_key', 'SAAS_ALERTS_API_KEY')
+        if (!apiKey) return res.json({ status: 'error', message: 'Missing API key (env: SAAS_ALERTS_API_KEY)' })
+        await axios.get('https://app.saasalerts.com/api/v1/customers', {
+          headers: { apiKey }, timeout: 10000
+        })
+        return res.json({ status: 'ok', message: 'Connected — SaaS Alerts API responding' })
+      }
+
+      case 'auvik': {
+        const apiUser = c('api_user', 'AUVIK_API_USER')
+        const apiKey = c('api_key', 'AUVIK_API_KEY')
+        const baseUrl = c('base_url', 'AUVIK_BASE_URL') || 'https://auvikapi.us1.my.auvik.com/v1'
+        if (!apiUser || !apiKey) return res.json({ status: 'error', message: 'Missing credentials (env: AUVIK_API_USER / AUVIK_API_KEY)' })
+        const r = await axios.get(`${baseUrl}/tenants`, {
+          auth: { username: apiUser, password: apiKey }, timeout: 10000
+        })
+        const count = r.data?.data?.length ?? '?'
+        return res.json({ status: 'ok', message: `Connected — Auvik responding (${count} tenants)` })
+      }
+
+      case 'customer_thermometer': {
+        const apiKey = c('api_key', 'CUSTOMER_THERMOMETER_API_KEY')
+        if (!apiKey) return res.json({ status: 'error', message: 'Missing API key (env: CUSTOMER_THERMOMETER_API_KEY)' })
+        await axios.get(`https://api.customerthermometer.com/v1/thermometers?apiKey=${apiKey}`, { timeout: 10000 })
+        return res.json({ status: 'ok', message: 'Connected — Customer Thermometer API responding' })
+      }
+
+      default:
+        return res.json({ status: 'error', message: 'No test implemented for this integration' })
+    }
+  } catch (err) {
+    const msg = err.response?.data?.message || err.response?.data?.error || err.response?.data?.errors?.[0]?.detail || err.message
+    const code = err.response?.status
+    return res.json({ status: 'error', message: code ? `HTTP ${code}: ${msg}` : msg })
   }
-
-  // TODO: Implement per-integration connection tests
-  // For now, just return success if credentials exist
-  const creds = source.rows[0].credentials || {}
-  const hasRequiredCreds = INTEGRATION_DEFS[type].credential_fields
-    .filter(f => f.required)
-    .every(f => creds[f.key])
-
-  if (!hasRequiredCreds) {
-    return res.json({ status: 'error', message: 'Missing required credentials' })
-  }
-
-  res.json({ status: 'ok', message: 'Credentials configured. Use sync to test connection.' })
 })
 
 // GET /api/integrations/:type/history — sync history for an integration

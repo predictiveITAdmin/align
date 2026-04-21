@@ -10,7 +10,9 @@ const { syncItGlue } = require('../services/itGlueSync')
 const { syncSaasAlerts } = require('../services/saasAlertsSync')
 const { syncAuvik } = require('../services/auvikSync')
 const { syncContacts } = require('../services/autotaskContactsSync')
+const { syncSoftware } = require('../services/softwareSync')
 const { deduplicateAssets } = require('../services/assetDedup')
+const { runAllSyncs } = require('../services/scheduler')
 const db = require('../db')
 
 // Helper to get tenant ID (uses req.tenant from middleware, falls back to predictiveit)
@@ -150,6 +152,19 @@ router.post('/dedup-assets', async (req, res) => {
   }
 })
 
+// POST /api/sync/software — Datto RMM software inventory sync
+router.post('/software', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+    const result = await syncSoftware(tenantId)
+    res.json({ status: 'ok', source: 'datto_rmm', entity: 'software', ...result })
+  } catch (err) {
+    console.error('[sync] software error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/sync/contacts — Autotask contacts sync
 router.post('/contacts', async (req, res) => {
   try {
@@ -180,6 +195,7 @@ router.post('/all', async (req, res) => {
     results.saasAlerts = await syncSaasAlerts(tenantId)
     results.auvik = await syncAuvik(tenantId)
     results.contacts = await syncContacts(tenantId)
+    results.software = await syncSoftware(tenantId)
 
     res.json({ status: 'ok', results })
   } catch (err) {
@@ -189,6 +205,112 @@ router.post('/all', async (req, res) => {
 })
 
 // GET /api/sync/status — get sync history
+// POST /api/sync/backfill-hardware — re-resolve Autotask picklist IDs for existing assets
+// Fetches picklists once then backfills manufacturer, model, cpu_description, motherboard,
+// display_adapters, last_user, mac_address, ram_bytes, storage_bytes, hostname for any
+// asset that has autotask_data but still has null resolved fields
+router.post('/backfill-hardware', async (req, res) => {
+  try {
+    const tenantId = await getTenantId(req)
+    if (!tenantId) return res.status(404).json({ error: 'Tenant not found' })
+
+    // Build Autotask client from stored or env credentials
+    const axios = require('axios')
+    const sourceRow = await db.query(
+      `SELECT credentials FROM sync_sources WHERE tenant_id = $1 AND source_type = 'autotask'`,
+      [tenantId]
+    )
+    const creds = sourceRow.rows[0]?.credentials || {}
+    const zone = creds.zone || process.env.AUTOTASK_ZONE || 'webservices1'
+    const user = creds.api_user || process.env.AUTOTASK_API_USER
+    const secret = creds.api_secret || process.env.AUTOTASK_API_SECRET
+    const code = creds.integration_code || process.env.AUTOTASK_INTEGRATION_CODE
+    if (!user || !secret) return res.json({ status: 'error', message: 'Missing Autotask credentials' })
+
+    const client = axios.create({
+      baseURL: `https://${zone}.autotask.net/ATServicesRest/V1.0`,
+      headers: { ApiIntegrationCode: code, UserName: user, Secret: secret, 'Content-Type': 'application/json' },
+    })
+
+    // Fetch picklists
+    const fieldsRes = await client.get('/ConfigurationItems/entityInformation/fields')
+    const picklistMap = {}
+    for (const f of (fieldsRes.data?.fields || [])) {
+      if (f.picklistValues?.length) {
+        picklistMap[f.name] = {}
+        for (const v of f.picklistValues) picklistMap[f.name][String(v.value)] = v.label
+      }
+    }
+    function resolve(field, id) {
+      if (id === null || id === undefined || id === 0 || id === '0') return null
+      return picklistMap[field]?.[String(id)] || null
+    }
+
+    // Find assets with autotask_data that are still missing resolved hardware fields
+    const assets = await db.query(
+      `SELECT id, autotask_data FROM assets
+       WHERE tenant_id = $1
+         AND autotask_data IS NOT NULL
+         AND autotask_data != '{}'
+         AND (manufacturer IS NULL OR model IS NULL OR cpu_description IS NULL)
+       LIMIT 10000`,
+      [tenantId]
+    )
+
+    let updated = 0, skipped = 0
+    for (const asset of assets.rows) {
+      const d = asset.autotask_data || {}
+      const manufacturer  = resolve('rmmDeviceAuditManufacturerID', d.rmmDeviceAuditManufacturerID)
+      const model         = resolve('rmmDeviceAuditModelID', d.rmmDeviceAuditModelID)
+      const cpuDesc       = resolve('rmmDeviceAuditProcessorID', d.rmmDeviceAuditProcessorID)
+      const motherboard   = resolve('rmmDeviceAuditMotherboardID', d.rmmDeviceAuditMotherboardID)
+      const displayAdapt  = resolve('rmmDeviceAuditDisplayAdaptorID', d.rmmDeviceAuditDisplayAdaptorID)
+      const lastUser      = d.rmmDeviceAuditLastUser || null
+      const hostname      = d.rmmDeviceAuditHostname || null
+      const ramBytes      = d.rmmDeviceAuditMemoryBytes ? Number(d.rmmDeviceAuditMemoryBytes) || null : null
+      const storageBytes  = d.rmmDeviceAuditStorageBytes ? Number(d.rmmDeviceAuditStorageBytes) || null : null
+      const ipRaw         = d.rmmDeviceAuditIPAddress || null
+      const ipAddress     = ipRaw && /^\d{1,3}(\.\d{1,3}){3}$/.test(ipRaw) ? ipRaw : null
+      const macRaw        = d.rmmDeviceAuditMacAddress || null
+      const macAddress    = macRaw && /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(macRaw) ? macRaw : null
+
+      if (!manufacturer && !model && !cpuDesc && !ramBytes) { skipped++; continue }
+
+      await db.query(
+        `UPDATE assets SET
+           manufacturer    = COALESCE(manufacturer, $2),
+           model           = COALESCE(model, $3),
+           cpu_description = COALESCE(cpu_description, $4),
+           motherboard     = COALESCE(motherboard, $5),
+           display_adapters= COALESCE(display_adapters, $6),
+           last_user       = COALESCE(last_user, $7),
+           hostname        = COALESCE(hostname, $8),
+           ram_bytes       = COALESCE(ram_bytes, $9),
+           storage_bytes   = COALESCE(storage_bytes, $10),
+           ip_address      = COALESCE(ip_address, $11::inet),
+           mac_address     = COALESCE(mac_address, $12),
+           updated_at      = NOW()
+         WHERE id = $1`,
+        [asset.id, manufacturer, model, cpuDesc, motherboard, displayAdapt,
+         lastUser, hostname, ramBytes, storageBytes, ipAddress, macAddress]
+      )
+      updated++
+    }
+
+    console.log(`[backfill-hardware] Done: ${updated} updated, ${skipped} skipped`)
+    res.json({ status: 'ok', checked: assets.rows.length, updated, skipped })
+  } catch (err) {
+    console.error('[backfill-hardware] error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/sync/run-all — manually trigger a full scheduled sync cycle
+router.post('/run-all', async (req, res) => {
+  res.json({ status: 'started', message: 'Full sync cycle triggered — check server logs for progress' })
+  runAllSyncs().catch(err => console.error('[sync] run-all error:', err.message))
+})
+
 router.get('/status', async (req, res) => {
   try {
     const tenantId = await getTenantId(req)

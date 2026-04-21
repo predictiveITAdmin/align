@@ -167,15 +167,34 @@ async function syncDattoRmm(tenantId) {
 
     console.log(`[datto-rmm-sync] Fetched ${allDevices.length} devices from ${siteCount} sites`)
 
+    // Deduplicate by device UID — same physical device can appear in multiple
+    // sites in Datto RMM (e.g. moved devices, sub-sites). Keep first occurrence.
+    const seenDeviceIds = new Set()
+    const uniqueDevices = []
+    for (const d of allDevices) {
+      const uid = d.uid || d.id?.toString()
+      if (uid && !seenDeviceIds.has(uid)) {
+        seenDeviceIds.add(uid)
+        uniqueDevices.push(d)
+      }
+    }
+    if (uniqueDevices.length < allDevices.length) {
+      console.log(`[datto-rmm-sync] Deduped ${allDevices.length - uniqueDevices.length} duplicate devices (${uniqueDevices.length} unique)`)
+    }
+    const devicesToProcess = uniqueDevices
+
     // ─── Upsert devices into assets ───────────────────────────────────────
     let created = 0, updated = 0, skipped = 0
 
-    for (const device of allDevices) {
+    for (const device of devicesToProcess) {
       const clientId = siteClientMap[device._siteUid]
       if (!clientId) { skipped++; continue }
 
       const deviceId = device.uid || device.id?.toString()
       if (!deviceId) { skipped++; continue }
+
+      // Skip deleted or archived devices
+      if (device.deleted === true || device.archived === true) { skipped++; continue }
 
       // Map device type
       const dtRaw = typeof device.deviceType === 'object' ? (device.deviceType?.category || '') : (device.deviceType || '')
@@ -187,6 +206,16 @@ async function syncDattoRmm(tenantId) {
       const ipRaw = device.intIpAddress || device.ipAddress || null
       const ipAddress = ipRaw && /^\d{1,3}(\.\d{1,3}){3}$/.test(ipRaw) ? ipRaw : null
 
+      // Extract last user — strip domain prefix (DOMAIN\user → user)
+      const lastUserRaw = device.lastLoggedInUser || null
+      const lastUser = lastUserRaw
+        ? (lastUserRaw.includes('\\') ? lastUserRaw.split('\\').pop() : lastUserRaw)
+        : null
+
+      // Note: The concord-api Datto RMM API does not return hardware audit fields
+      // (manufacturer, model, CPU, RAM) in the device list or device detail response.
+      // Hardware data comes through Autotask's rmmDeviceAudit* fields — use the
+      // backfill-hardware endpoint to resolve those from stored autotask_data.
       const upsertResult = await upsertDattoAsset({
         tenantId,
         clientId,
@@ -198,6 +227,15 @@ async function syncDattoRmm(tenantId) {
         ipAddress,
         warrantyDate: device.warrantyDate || null,
         isOnline: device.online === true || device.online === 'true',
+        lastUser,
+        hostname: device.hostname || null,
+        ramBytes: null,
+        storageBytes: null,
+        storageFreeBytes: null,
+        cpuDescription: null,
+        cpuCores: null,
+        manufacturer: null,
+        model: null,
         deviceData: device,
       })
 
@@ -210,11 +248,39 @@ async function syncDattoRmm(tenantId) {
         `UPDATE sync_logs SET status = 'completed', completed_at = NOW(),
          records_fetched = $2, records_created = $3, records_updated = $4, records_skipped = $5
          WHERE id = $1`,
-        [syncLogId, allDevices.length, created, updated, skipped]
+        [syncLogId, devicesToProcess.length, created, updated, skipped]
       )
     }
 
-    console.log(`[datto-rmm-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped`)
+    // NOTE: The Datto RMM concord-api does not expose hardware audit data
+    // (manufacturer, model, CPU, RAM, storage) via its REST API. Hardware specs
+    // are synced through Autotask's rmmDeviceAudit* ConfigurationItem fields.
+    // Use POST /api/sync/backfill-hardware to resolve those fields from autotask_data.
+
+    // Load tenant inactive threshold (default 60 days)
+    const settingsRow = await db.query(
+      `SELECT rmm_inactive_threshold_days, rmm_inactive_action FROM tenant_settings WHERE tenant_id = $1`,
+      [tenantId]
+    )
+    const thresholdDays = settingsRow.rows[0]?.rmm_inactive_threshold_days ?? 60
+    const inactiveAction = settingsRow.rows[0]?.rmm_inactive_action ?? 'mark_inactive'
+
+    if (inactiveAction === 'mark_inactive') {
+      const staleResult = await db.query(
+        `UPDATE assets SET is_active = false
+         WHERE tenant_id = $1
+           AND datto_rmm_device_id IS NOT NULL
+           AND last_seen_at IS NOT NULL
+           AND last_seen_at < NOW() - ($2 || ' days')::INTERVAL
+           AND (is_online = false OR is_online IS NULL)`,
+        [tenantId, thresholdDays]
+      )
+      if (staleResult.rowCount > 0) {
+        console.log(`[datto-rmm-sync] Marked ${staleResult.rowCount} stale assets inactive (threshold: ${thresholdDays}d)`)
+      }
+    }
+
+    console.log(`[datto-rmm-sync] Done: ${created} created, ${updated} updated, ${skipped} skipped (${devicesToProcess.length} unique devices)`)
     return { total: allDevices.length, created, updated, skipped }
   } catch (err) {
     console.error('[datto-rmm-sync] Error:', err.message)

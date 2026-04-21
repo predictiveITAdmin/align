@@ -10,8 +10,9 @@ router.get('/', async (req, res) => {
     let query = `
       SELECT id, name, autotask_company_id, website, phone,
              city, state, is_active, classification, health_score,
-             assigned_vcio_id, assigned_tam_id,
+             assigned_vcio_id, assigned_tam_id, sync_enabled,
              last_synced_at, created_at, updated_at,
+             vertical, frameworks_enabled, standards_count,
              (SELECT count(*) FROM assets a WHERE a.client_id = clients.id) as asset_count,
              (SELECT count(*) FROM recommendations r WHERE r.client_id = clients.id) as rec_count,
              (SELECT ROUND(
@@ -69,23 +70,42 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-// PATCH /api/clients/:id — update classification or other fields
+// PATCH /api/clients/:id — update classification, profile, or other fields
 router.patch('/:id', async (req, res) => {
-  const { classification, assigned_vcio_id, assigned_tam_id } = req.body
+  const { classification, assigned_vcio_id, assigned_tam_id, sync_enabled,
+          vertical, frameworks_enabled, identity_platform, infra_model,
+          lob_apps, platform_stack, review_cadence } = req.body
   try {
     const result = await db.query(
       `UPDATE clients SET
-        classification = COALESCE($3, classification),
-        assigned_vcio_id = COALESCE($4, assigned_vcio_id),
-        assigned_tam_id = COALESCE($5, assigned_tam_id),
+        classification     = COALESCE($3, classification),
+        assigned_vcio_id   = COALESCE($4, assigned_vcio_id),
+        assigned_tam_id    = COALESCE($5, assigned_tam_id),
+        sync_enabled       = COALESCE($6, sync_enabled),
+        vertical           = COALESCE($7, vertical),
+        frameworks_enabled = COALESCE($8, frameworks_enabled),
+        identity_platform  = COALESCE($9, identity_platform),
+        infra_model        = COALESCE($10, infra_model),
+        lob_apps           = COALESCE($11, lob_apps),
+        platform_stack     = COALESCE($12, platform_stack),
+        review_cadence     = COALESCE($13::review_cadence, review_cadence),
         updated_at = NOW()
        WHERE id = $1 AND tenant_id = $2
        RETURNING *`,
-      [req.params.id, req.tenant.id, classification, assigned_vcio_id, assigned_tam_id]
+      [req.params.id, req.tenant.id, classification, assigned_vcio_id, assigned_tam_id,
+       sync_enabled,
+       vertical || null,
+       frameworks_enabled ? (Array.isArray(frameworks_enabled) ? frameworks_enabled : [frameworks_enabled]) : null,
+       identity_platform || null,
+       infra_model || null,
+       lob_apps ? (Array.isArray(lob_apps) ? lob_apps : [lob_apps]) : null,
+       platform_stack || null,
+       review_cadence || null]
     )
     if (!result.rows.length) return res.status(404).json({ error: 'Client not found' })
     res.json({ data: result.rows[0] })
   } catch (err) {
+    console.error('[clients] update error:', err.message)
     res.status(500).json({ error: 'Failed to update client' })
   }
 })
