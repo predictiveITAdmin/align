@@ -142,12 +142,45 @@ const AT_STATUS_LABELS = {
   3: 'Closed',
   4: 'Implemented',
 }
+
+// ─── Stage-number helpers ─────────────────────────────────────────────────────
+// Autotask stage labels look like "7 - Closed (Signed Quote...)" → prefix = 7
+// The stage NUMBER is the truth about deal state — many reps skip the Close/Lost
+// wizard so the AT status field (Active/Lost/Closed) cannot be relied on alone.
+//
+// Stage classification (from Autotask picklist seen in production):
+//   1-6  → Active / In-Progress
+//   7-14 → Closed/Won  (various fulfilment stages, regardless of AT status field)
+//   15   → Lost
+//   16   → Reopen/RMA   (treat as Active)
+//   66   → Junk/Spam   — NEVER SYNC (hard-coded exclusion, not configurable)
+function stageNumber(stageLabel) {
+  const m = String(stageLabel || '').match(/^(\d+)/)
+  return m ? parseInt(m[1], 10) : null
+}
+
+const JUNK_STAGE = 66   // Hard exclude — never written to DB
+
+/**
+ * Derive the canonical Align status from AT status + stage number.
+ * Stage takes precedence so deals where the rep forgot to run the wizard
+ * are still classified correctly.
+ */
+function deriveStatus(atStatusLabel, stageNum) {
+  if (stageNum != null) {
+    if (stageNum >= 7 && stageNum <= 14) return 'Closed'   // Won/Implemented
+    if (stageNum === 15)                  return 'Lost'
+    // Stage 16 (Reopen/RMA) keeps its AT status
+  }
+  return atStatusLabel
+}
+
 // Statuses excluded from sync by default.
-// NOTE: 'Closed' (won) and 'Implemented' are intentionally NOT excluded — closed-won
-// opportunities are the only ones that have PO numbers, which the distributor
-// matching pipeline needs. Excluding them would break PO → order linking.
-// Only 'Lost' and 'Not Ready To Buy' are skipped as they will never have POs.
-const DEFAULT_EXCLUDE_STATUSES = ['Not Ready To Buy', 'Lost']
+// 'Not Ready To Buy' is excluded — pre-sales prospects not yet opportunities.
+// 'Lost' is intentionally NOT excluded so full client history is available
+// (the UI filters them out of Active views; the distributor PO pipeline ignores them).
+// Stage-66 (Junk/Spam) is a hardcoded exclusion that cannot be overridden.
+const DEFAULT_EXCLUDE_STATUSES = ['Not Ready To Buy']
 
 // ─── Load opportunity sync settings for tenant ───────────────────────────────
 async function getSyncSettings(tenantId) {
@@ -216,15 +249,27 @@ async function syncOpportunities(tenantId) {
         continue
       }
 
-      // Resolve status label from picklist ID
-      const statusLabel   = AT_STATUS_LABELS[opp.status] || `Status ${opp.status}`
-      const stageLabel    = stageLabels[opp.stage] || String(opp.stage ?? '')
-      const categoryLabel = categoryLabels[opp.opportunityCategory] || null
+      // Resolve labels from picklist IDs
+      const atStatusLabel  = AT_STATUS_LABELS[opp.status] || `Status ${opp.status}`
+      const stageLabel     = stageLabels[opp.stage] || String(opp.stage ?? '')
+      const categoryLabel  = categoryLabels[opp.opportunityCategory] || null
+      const stageNum       = stageNumber(stageLabel)
 
-      // Skip by status — don't add new opps with excluded statuses
+      // Hard exclude: stage 66 (Junk/Spam) — never written to DB regardless of settings
+      if (stageNum === JUNK_STAGE) {
+        skipped++
+        continue
+      }
+
+      // Derive canonical status: stage number takes precedence over AT status field
+      // because many reps skip the Close/Lost wizard in Autotask
+      const statusLabel = deriveStatus(atStatusLabel, stageNum)
+
+      // Skip by effective status — configurable. Default: 'Not Ready To Buy' only.
+      // NOTE: Lost is intentionally NOT excluded so client history is complete.
       const excludeStatuses = cfg.exclude_statuses || DEFAULT_EXCLUDE_STATUSES
       if (excludeStatuses.includes(statusLabel)) {
-        // If already in DB, update status but don't delete
+        // If already in DB, still update it (so status corrections propagate)
         const existing = await db.query(
           `SELECT id FROM opportunities WHERE autotask_opportunity_id = $1`,
           [opp.id]

@@ -146,9 +146,11 @@ router.get('/sync/status', requireAuth, async (req, res) => {
 
 // All valid Autotask opportunity status labels (for admin UI)
 const AT_STATUS_OPTIONS = ['Active', 'Not Ready To Buy', 'Lost', 'Closed', 'Implemented']
-// 'Closed' and 'Implemented' intentionally NOT in defaults — they are closed-won deals
-// and the only opportunities that will have PO numbers for distributor order matching.
-const DEFAULT_EXCLUDE_STATUSES = ['Not Ready To Buy', 'Lost']
+// Default: only exclude 'Not Ready To Buy' (pre-prospect records, no pipeline value).
+// 'Lost' is intentionally NOT excluded — full client deal history must be available.
+// 'Closed'/'Implemented' are never excluded — they have POs needed for order matching.
+// Stage-66 (Junk/Spam) is a hardcoded exclusion in the sync service (not configurable).
+const DEFAULT_EXCLUDE_STATUSES = ['Not Ready To Buy']
 
 // ─── GET /api/opportunities/sync-settings — load sync filter config ──────────
 router.get('/sync-settings', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {

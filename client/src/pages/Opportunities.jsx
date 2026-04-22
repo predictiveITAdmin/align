@@ -23,30 +23,45 @@ function fmtTs(d) {
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-// Autotask status labels
+// Autotask status labels (as stored after stage-based derivation in sync)
 const AT_STATUS_OPTIONS = ['Active', 'Not Ready To Buy', 'Lost', 'Closed', 'Implemented']
-// Status groups for the filter widgets
+
+// Status groups for filter widgets + stat tiles
 const OPEN_STATUSES = new Set(['Active'])
 const WON_STATUSES  = new Set(['Closed', 'Implemented'])
 const LOST_STATUSES = new Set(['Lost', 'Not Ready To Buy'])
+
+// Derive stage number prefix from label (e.g. "7 - Closed..." → 7)
+function stageNum(stageLabel) {
+  const m = String(stageLabel || '').match(/^(\d+)/)
+  return m ? parseInt(m[1], 10) : null
+}
 
 function statusPillClass(status) {
   switch (status) {
     case 'Active':            return 'bg-green-50 text-green-700'
     case 'Not Ready To Buy':  return 'bg-yellow-50 text-yellow-700'
     case 'Lost':              return 'bg-red-50 text-red-600'
-    case 'Closed':            return 'bg-gray-100 text-gray-500'
-    case 'Implemented':       return 'bg-blue-50 text-blue-700'
+    case 'Closed':            return 'bg-blue-50 text-blue-700'
+    case 'Implemented':       return 'bg-emerald-50 text-emerald-700'
     default:                  return 'bg-gray-100 text-gray-500'
   }
 }
 
+// Stage pill: colour by stage-number group
 function stagePillClass(stage) {
   if (!stage) return 'bg-gray-100 text-gray-500'
+  const n = stageNum(stage)
+  if (n != null) {
+    if (n >= 1  && n <= 6)  return 'bg-indigo-50 text-indigo-700'   // In-progress
+    if (n >= 7  && n <= 14) return 'bg-blue-50 text-blue-700'       // Closed/Won
+    if (n === 15)            return 'bg-red-50 text-red-600'         // Lost
+    if (n === 16)            return 'bg-yellow-50 text-yellow-700'   // Reopen/RMA
+  }
   const s = stage.toLowerCase()
   if (s.includes('quote') || s.includes('proposal')) return 'bg-indigo-50 text-indigo-700'
   if (s.includes('waiting') || s.includes('po') || s.includes('contract')) return 'bg-yellow-50 text-yellow-700'
-  if (s.includes('qual')) return 'bg-blue-50 text-blue-700'
+  if (s.includes('qual'))  return 'bg-blue-50 text-blue-700'
   if (s.includes('lead') || s.includes('first contact')) return 'bg-purple-50 text-purple-700'
   return 'bg-gray-100 text-gray-600'
 }

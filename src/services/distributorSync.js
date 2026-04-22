@@ -51,12 +51,18 @@ async function syncSupplier(supplier) {
   let fetchOptions = {}
   if (adapter.syncStrategy === 'po_driven') {
     // Only closed-won opportunities have POs. Exclude MRR (Monthly Recurring Revenue)
-    // category opps — recurring contracts are never purchased via distributor POs.
+    // and Lost (stage-15) and Junk (stage-66).
+    // Stage-based fallback covers legacy data where AT status was still 'Active' because
+    // the rep skipped the Close wizard (stages 7-14 = won, per deriveStatus() logic).
     const poRes = await db.query(
       `SELECT DISTINCT unnest(po_numbers) AS po FROM opportunities
        WHERE tenant_id = $1
          AND array_length(po_numbers, 1) > 0
-         AND status IN ('Closed', 'Implemented')
+         AND (
+           status IN ('Closed', 'Implemented')
+           OR (stage ~ '^(7|8|9|10|11|12|13|14)[[:space:]-]')
+         )
+         AND stage NOT SIMILAR TO '(15|66)[[:space:]-]%'
          AND (category IS NULL OR category NOT ILIKE '%Monthly Recurring Revenue%')`,
       [tenantId]
     )

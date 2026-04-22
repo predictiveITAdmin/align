@@ -4517,23 +4517,44 @@ const PROC_STATUS_STYLES = {
 }
 function stagePillClass(stage) {
   if (!stage) return 'bg-gray-100 text-gray-500'
-  const s = stage.toLowerCase()
-  if (s.includes('closed') && (s.includes('won') || s.includes('satisfied') || s.includes('payment')))
-    return 'bg-green-50 text-green-700'
-  if (s.includes('closed') || s.includes('lost') || s.includes('no longer'))
-    return 'bg-red-50 text-red-600'
-  if (s.includes('qual') || s.includes('prospect'))
-    return 'bg-blue-50 text-blue-700'
-  if (s.includes('quote') || s.includes('proposal'))
-    return 'bg-indigo-50 text-indigo-700'
-  if (s.includes('waiting') || s.includes('po') || s.includes('contract'))
-    return 'bg-yellow-50 text-yellow-700'
+  // Colour by stage-number group (matches backend classification)
+  const m = String(stage).match(/^(\d+)/)
+  const n = m ? parseInt(m[1], 10) : null
+  if (n != null) {
+    if (n >= 1  && n <= 6)  return 'bg-indigo-50 text-indigo-700'   // In-progress
+    if (n >= 7  && n <= 14) return 'bg-blue-50 text-blue-700'       // Won
+    if (n === 15)            return 'bg-red-50 text-red-600'         // Lost
+    if (n === 16)            return 'bg-yellow-50 text-yellow-700'   // RMA/Reopen
+  }
   return 'bg-gray-100 text-gray-600'
 }
-// "Active" is the only open status in Autotask
-const OPEN_OPP_STATUS = 'Active'
-function isOppOpen(opp) { return opp.status === OPEN_OPP_STATUS }
-const DIST_LABELS = { ingram_xi: 'Ingram', tdsynnex_ecx: 'TD Synnex', amazon_business_csv: 'Amazon', provantage_manual: 'Provantage' }
+// Stage-number helper (mirrors backend logic)
+function oppStageNum(opp) {
+  const m = String(opp.stage || '').match(/^(\d+)/)
+  return m ? parseInt(m[1], 10) : null
+}
+// Open = Active status AND stage is NOT 7-15 (in case sync hasn't corrected yet)
+function isOppOpen(opp) {
+  const n = oppStageNum(opp)
+  if (n != null && n >= 7 && n <= 15) return false
+  return opp.status === 'Active'
+}
+// Won = Closed/Implemented status OR stage 7-14 (for legacy rows not yet re-synced)
+function isOppWon(opp) {
+  if (opp.status === 'Closed' || opp.status === 'Implemented') return true
+  const n = oppStageNum(opp)
+  return n != null && n >= 7 && n <= 14
+}
+// Lost = Lost status OR stage 15
+function isOppLost(opp) {
+  if (opp.status === 'Lost') return true
+  const n = oppStageNum(opp)
+  return n === 15
+}
+const DIST_LABELS = {
+  ingram_xi: 'Ingram', tdsynnex_esolutions: 'TD Synnex', tdsynnex_ecx: 'TD Synnex',
+  amazon_business_csv: 'Amazon', provantage_manual: 'Provantage',
+}
 function procFmt(v) { return v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(v) }
 function procDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' }
 
@@ -4571,8 +4592,8 @@ function ClientOpportunitiesTab({ clientId }) {
   )
 
   const openOpps = opps.filter(o => isOppOpen(o))
-  const wonOpps  = opps.filter(o => o.status === 'Closed' || o.status === 'Implemented')
-  const lostOpps = opps.filter(o => o.status === 'Lost' || o.status === 'Not Ready To Buy')
+  const wonOpps  = opps.filter(o => isOppWon(o))
+  const lostOpps = opps.filter(o => isOppLost(o))
   const visible  = showClosed ? opps : openOpps
 
   // Status pill for client opportunities tab
@@ -4580,7 +4601,7 @@ function ClientOpportunitiesTab({ clientId }) {
     switch (status) {
       case 'Active':           return <span className="px-1.5 py-0.5 rounded text-xs bg-green-50 text-green-700">Active</span>
       case 'Closed':           return <span className="px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700">Won</span>
-      case 'Implemented':      return <span className="px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700">Implemented</span>
+      case 'Implemented':      return <span className="px-1.5 py-0.5 rounded text-xs bg-emerald-50 text-emerald-700">Implemented</span>
       case 'Lost':             return <span className="px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-600">Lost</span>
       case 'Not Ready To Buy': return <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-50 text-yellow-700">Not Ready</span>
       default:                 return <span className="px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-500">{status || '—'}</span>
