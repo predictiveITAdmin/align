@@ -50,6 +50,8 @@ import {
   Clock,
   Eye,
   EyeOff,
+  FileText,
+  ShoppingCart,
 } from 'lucide-react'
 import Card, { CardHeader, CardBody } from '../components/Card'
 import StatCard from '../components/StatCard'
@@ -4504,7 +4506,205 @@ function ClientStandardsTab({ clientId, client }) {
   )
 }
 
-// ─── Tab: Orders ──────────────────────────────────────────────────────────────
+// ─── Procurement shared helpers ───────────────────────────────────────────────
+const PROC_STATUS_STYLES = {
+  submitted: 'bg-blue-50 text-blue-700', confirmed: 'bg-indigo-50 text-indigo-700',
+  partially_shipped: 'bg-yellow-50 text-yellow-700', shipped: 'bg-cyan-50 text-cyan-700',
+  delivered: 'bg-green-50 text-green-700', backordered: 'bg-orange-50 text-orange-700',
+  cancelled: 'bg-red-50 text-red-700', returned: 'bg-purple-50 text-purple-700',
+  exception: 'bg-gray-100 text-gray-600',
+}
+const STAGE_PILL_STYLES = {
+  Prospect: 'bg-gray-100 text-gray-600', Qualified: 'bg-blue-50 text-blue-700',
+  Quoting: 'bg-indigo-50 text-indigo-700', 'Closed Won': 'bg-green-50 text-green-700',
+  'Closed Lost': 'bg-red-50 text-red-600',
+}
+const DIST_LABELS = { ingram_xi: 'Ingram', tdsynnex_ecx: 'TD Synnex', amazon_business_csv: 'Amazon', provantage_manual: 'Provantage' }
+function procFmt(v) { return v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(v) }
+function procDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' }
+
+function ProcEmptyState({ icon: Icon, title, sub, linkTo, linkLabel }) {
+  return (
+    <div className="text-center py-16 text-gray-400">
+      <Icon size={32} className="mx-auto mb-2 opacity-30" />
+      <p className="text-sm font-medium text-gray-500">{title}</p>
+      {sub && <p className="text-xs mt-1">{sub}</p>}
+      {linkTo && <a href={linkTo} className="text-xs text-primary-600 hover:underline mt-1 block">{linkLabel}</a>}
+    </div>
+  )
+}
+
+// ─── Tab: Procurement / Opportunities ────────────────────────────────────────
+function ClientOpportunitiesTab({ clientId }) {
+  const [opps, setOpps] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get(`/opportunities?client_id=${clientId}`)
+      .then(r => setOpps(r.data || []))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [clientId])
+
+  if (loading) return <div className="text-center py-16 text-gray-400"><Loader2 size={20} className="animate-spin mx-auto" /></div>
+  if (!opps.length) return (
+    <ProcEmptyState icon={Target} title="No opportunities yet"
+      sub="Opportunities sync from Autotask hourly once configured"
+      linkTo="/opportunities" linkLabel="View all opportunities →" />
+  )
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-semibold text-gray-900">Opportunities ({opps.length})</h2>
+        <a href={`/opportunities`} className="text-xs text-primary-600 hover:text-primary-800 flex items-center gap-1">
+          View all <ChevronRight size={12} />
+        </a>
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50/50">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Opportunity</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stage</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Numbers</th>
+              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quotes</th>
+              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Orders</th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Amount</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Close Date</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {opps.map(opp => (
+              <tr key={opp.id} className="hover:bg-gray-50/50 transition-colors">
+                <td className="px-4 py-3 max-w-[240px]">
+                  <p className="text-sm font-medium text-gray-900 truncate">{opp.title}</p>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STAGE_PILL_STYLES[opp.stage] || 'bg-gray-100 text-gray-600'}`}>
+                    {opp.stage || '—'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 max-w-[160px]">
+                  {opp.po_numbers?.length > 0 ? (
+                    <p className="font-mono text-xs text-gray-700 truncate">
+                      {opp.po_numbers.slice(0, 2).join(', ')}{opp.po_numbers.length > 2 ? ` +${opp.po_numbers.length - 2}` : ''}
+                    </p>
+                  ) : <span className="text-xs text-gray-300">—</span>}
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <span className={`text-xs font-medium ${parseInt(opp.quote_count) > 0 ? 'text-blue-600' : 'text-gray-300'}`}>
+                    {opp.quote_count || 0}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <span className={`text-xs font-medium ${parseInt(opp.order_count) > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+                    {opp.order_count || 0}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <span className="text-sm text-gray-900">{opp.amount != null ? procFmt(opp.amount) : '—'}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-xs text-gray-500">{procDate(opp.expected_close)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tab: Procurement / Quotes ────────────────────────────────────────────────
+function ClientQuotesTab({ clientId }) {
+  const [quotes, setQuotes] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get(`/opportunities/client-quotes?client_id=${clientId}`)
+      .then(r => setQuotes(r.data || []))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [clientId])
+
+  if (loading) return <div className="text-center py-16 text-gray-400"><Loader2 size={20} className="animate-spin mx-auto" /></div>
+  if (!quotes.length) return (
+    <ProcEmptyState icon={FileText} title="No quotes yet"
+      sub="Quotes sync from Autotask when opportunities are synced" />
+  )
+
+  const QUOTE_STATUS_STYLES = {
+    Active: 'bg-green-50 text-green-700', Draft: 'bg-gray-100 text-gray-600',
+    Sent: 'bg-blue-50 text-blue-700', Accepted: 'bg-emerald-50 text-emerald-700',
+    Expired: 'bg-orange-50 text-orange-700', Rejected: 'bg-red-50 text-red-700',
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-semibold text-gray-900">Quotes ({quotes.length})</h2>
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50/50">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quote</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Opportunity</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Numbers</th>
+              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Items</th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Amount</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Valid Until</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {quotes.map(q => (
+              <tr key={q.id} className="hover:bg-gray-50/50 transition-colors">
+                <td className="px-4 py-3">
+                  <p className="text-sm font-medium text-gray-900">{q.title || q.quote_number || `Quote ${q.autotask_quote_id}`}</p>
+                  {q.quote_number && <p className="text-xs text-gray-400 font-mono">#{q.quote_number}</p>}
+                </td>
+                <td className="px-4 py-3 max-w-[180px]">
+                  <p className="text-xs text-gray-700 truncate">{q.opportunity_title || '—'}</p>
+                  {q.opportunity_stage && (
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${STAGE_PILL_STYLES[q.opportunity_stage] || 'bg-gray-100 text-gray-600'}`}>
+                      {q.opportunity_stage}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${QUOTE_STATUS_STYLES[q.status] || 'bg-gray-100 text-gray-600'}`}>
+                    {q.status || '—'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 max-w-[140px]">
+                  {q.po_numbers?.length > 0 ? (
+                    <p className="font-mono text-xs text-gray-700 truncate">{q.po_numbers.slice(0, 2).join(', ')}</p>
+                  ) : <span className="text-xs text-gray-300">—</span>}
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <span className={`text-xs font-medium ${parseInt(q.item_count) > 0 ? 'text-indigo-600' : 'text-gray-300'}`}>
+                    {q.item_count || 0}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <span className="text-sm font-medium text-gray-900">{q.amount != null ? procFmt(q.amount) : '—'}</span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-xs text-gray-500">{procDate(q.valid_until)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tab: Procurement / Orders ────────────────────────────────────────────────
 function ClientOrdersTab({ clientId }) {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -4516,31 +4716,11 @@ function ClientOrdersTab({ clientId }) {
       .finally(() => setLoading(false))
   }, [clientId])
 
-  const STATUS_STYLES = {
-    submitted: 'bg-blue-50 text-blue-700', confirmed: 'bg-indigo-50 text-indigo-700',
-    partially_shipped: 'bg-yellow-50 text-yellow-700', shipped: 'bg-cyan-50 text-cyan-700',
-    delivered: 'bg-green-50 text-green-700', backordered: 'bg-orange-50 text-orange-700',
-    cancelled: 'bg-red-50 text-red-700', exception: 'bg-gray-100 text-gray-600',
-  }
-  const MATCH_STYLES = {
-    matched: 'bg-green-50 text-green-700', needs_review: 'bg-yellow-50 text-yellow-700',
-    unmapped: 'bg-red-50 text-red-600',
-  }
-  const DIST = { ingram_xi: 'Ingram', tdsynnex_ecx: 'TD Synnex', amazon_business_csv: 'Amazon', provantage_manual: 'Provantage' }
-  function fmtCur(v) { return v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(v) }
-  function fmtD(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' }
-
   if (loading) return <div className="text-center py-16 text-gray-400"><Loader2 size={20} className="animate-spin mx-auto" /></div>
-
   if (!orders.length) return (
-    <div className="text-center py-16 text-gray-400">
-      <Package size={32} className="mx-auto mb-2 opacity-30" />
-      <p className="text-sm">No orders linked to this client yet</p>
-      <p className="text-xs mt-1 text-gray-400">
-        Import orders from distributors and map them in the{' '}
-        <a href="/orders" className="text-primary-600 hover:underline">Orders</a> page
-      </p>
-    </div>
+    <ProcEmptyState icon={Package} title="No distributor orders linked to this client yet"
+      sub="Import orders from distributors, then map them in the Orders page"
+      linkTo="/orders" linkLabel="Go to Orders →" />
   )
 
   return (
@@ -4548,7 +4728,7 @@ function ClientOrdersTab({ clientId }) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-semibold text-gray-900">Distributor Orders ({orders.length})</h2>
         <a href="/orders" className="text-xs text-primary-600 hover:text-primary-800 flex items-center gap-1">
-          View all orders <ChevronRight size={12} />
+          View all <ChevronRight size={12} />
         </a>
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -4567,21 +4747,19 @@ function ClientOrdersTab({ clientId }) {
           <tbody className="divide-y divide-gray-50">
             {orders.map(ord => (
               <tr key={ord.id} className="hover:bg-gray-50/50 transition-colors">
-                <td className="px-4 py-3">
-                  <span className="font-mono text-xs text-gray-700">{ord.distributor_order_id}</span>
-                </td>
-                <td className="px-4 py-3 text-xs text-gray-600">{DIST[ord.distributor] || ord.distributor}</td>
+                <td className="px-4 py-3 font-mono text-xs text-gray-700">{ord.distributor_order_id}</td>
+                <td className="px-4 py-3 text-xs text-gray-600">{DIST_LABELS[ord.distributor] || ord.distributor}</td>
                 <td className="px-4 py-3 font-mono text-xs text-gray-700">{ord.po_number || '—'}</td>
                 <td className="px-4 py-3 max-w-[160px]">
                   <p className="text-xs text-gray-700 truncate">{ord.opportunity_title || '—'}</p>
                 </td>
-                <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtD(ord.order_date)}</td>
+                <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{procDate(ord.order_date)}</td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLES[ord.status] || 'bg-gray-100 text-gray-600'}`}>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${PROC_STATUS_STYLES[ord.status] || 'bg-gray-100 text-gray-600'}`}>
                     {ord.status?.replace(/_/g, ' ') || '—'}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-right text-xs font-medium text-gray-900">{fmtCur(ord.total)}</td>
+                <td className="px-4 py-3 text-right text-xs font-medium text-gray-900">{procFmt(ord.total)}</td>
               </tr>
             ))}
           </tbody>
@@ -4597,7 +4775,8 @@ const TAB_KEY_MAP = {
   'Assessments': 'assessments', 'Contacts': 'contacts', 'SaaS Licenses': 'saas-licenses',
   'Roadmap': 'roadmap', 'Budget': 'budget', 'Software': 'software',
   'Goals': 'goals', 'Activities': 'activities', 'Profile': 'profile', 'Standards': 'standards',
-  'Orders': 'orders',
+  'Procurement': 'procurement-opps', 'Opportunities': 'procurement-opps',
+  'Quotes': 'procurement-quotes', 'Orders': 'procurement-orders',
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -4630,7 +4809,10 @@ export default function ClientDetail() {
     overview: 'Overview', goals: 'Goals', roadmap: 'Roadmap', budget: 'Budget',
     assessments: 'Assessments', recommendations: 'Recommendations', contacts: 'Contacts',
     hardware: 'Hardware', software: 'Software', 'saas-licenses': 'SaaS Licenses',
-    activities: 'Activities', profile: 'Profile', standards: 'Standards', orders: 'Orders',
+    activities: 'Activities', profile: 'Profile', standards: 'Standards',
+    'procurement-opps': 'Procurement · Opportunities',
+    'procurement-quotes': 'Procurement · Quotes',
+    'procurement-orders': 'Procurement · Orders',
   }
 
   return (
@@ -4683,9 +4865,11 @@ export default function ClientDetail() {
       {activeTab === 'software'        && <SoftwareTab clientId={id} />}
       {activeTab === 'contacts'        && <ContactsTab clientId={id} autotaskCompanyId={client.autotask_company_id} />}
       {activeTab === 'saas-licenses'   && <LicensesTab clientId={id} />}
-      {activeTab === 'profile'         && <ProfileTab clientId={id} client={client} onClientUpdate={setClient} />}
-      {activeTab === 'standards'       && <ClientStandardsTab clientId={id} client={client} />}
-      {activeTab === 'orders'          && <ClientOrdersTab clientId={id} />}
+      {activeTab === 'profile'              && <ProfileTab clientId={id} client={client} onClientUpdate={setClient} />}
+      {activeTab === 'standards'            && <ClientStandardsTab clientId={id} client={client} />}
+      {activeTab === 'procurement-opps'     && <ClientOpportunitiesTab clientId={id} />}
+      {activeTab === 'procurement-quotes'   && <ClientQuotesTab clientId={id} />}
+      {activeTab === 'procurement-orders'   && <ClientOrdersTab clientId={id} />}
     </div>
   )
 }

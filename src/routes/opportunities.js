@@ -37,6 +37,33 @@ router.get('/', requireAuth, async (req, res) => {
   }
 })
 
+// ─── GET /api/opportunities/client-quotes — all quotes for a client ──────────
+// Must be defined BEFORE /:id to avoid param capture.
+router.get('/client-quotes', requireAuth, async (req, res) => {
+  const { client_id } = req.query
+  if (!client_id) return res.status(400).json({ error: 'client_id required' })
+  try {
+    const r = await db.query(`
+      SELECT q.*,
+             o.title  AS opportunity_title,
+             o.stage  AS opportunity_stage,
+             o.po_numbers,
+             c.name   AS client_name,
+             (SELECT count(*) FROM quote_items WHERE quote_id = q.id) AS item_count
+      FROM quotes q
+      JOIN opportunities o ON o.id = q.opportunity_id
+      JOIN clients c       ON c.id = o.client_id
+      WHERE o.tenant_id = $1 AND o.client_id = $2
+      ORDER BY q.created_at DESC`,
+      [req.tenant.id, client_id]
+    )
+    res.json({ data: r.rows, total: r.rowCount })
+  } catch (err) {
+    console.error('[opportunities] client-quotes error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── GET /api/opportunities/:id — detail + quotes + items + orders ───────────
 router.get('/:id', requireAuth, async (req, res) => {
   try {

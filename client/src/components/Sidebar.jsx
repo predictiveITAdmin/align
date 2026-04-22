@@ -45,7 +45,14 @@ const clientNavItems = [
   { tab: 'activities',      icon: CheckSquare,     label: 'Activities' },
   { tab: 'profile',         icon: UserCog,         label: 'Profile' },
   { tab: 'standards',       icon: ListChecks,      label: 'Standards' },
-  { tab: 'orders',          icon: ShoppingCart,    label: 'Orders' },
+  {
+    key: 'procurement', icon: ShoppingCart, label: 'Procurement',
+    children: [
+      { tab: 'procurement-opps',    icon: Target,       label: 'Opportunities' },
+      { tab: 'procurement-quotes',  icon: FileText,     label: 'Quotes' },
+      { tab: 'procurement-orders',  icon: Package,      label: 'Orders' },
+    ],
+  },
   {
     key: 'client-assets', icon: Monitor, label: 'Assets',
     children: [
@@ -58,7 +65,7 @@ const clientNavItems = [
 
 export default function Sidebar({ mobileOpen = false, onMobileClose }) {
   const [collapsed, setCollapsed]   = useState(false)
-  const [openGroups, setOpenGroups] = useState({ assets: true, orders: true, 'client-assets': true })
+  const [openGroups, setOpenGroups] = useState({ assets: true, orders: true, procurement: true, 'client-assets': true })
   const { user, logout } = useAuth()
   const location = useLocation()
 
