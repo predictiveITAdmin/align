@@ -199,7 +199,7 @@ async function syncAllSuppliers(tenantId) {
     `SELECT id, tenant_id, adapter_key, credentials, environment, base_url,
             sync_mode, last_sync_at
      FROM suppliers
-     WHERE tenant_id = $1 AND is_enabled = true AND sync_mode = 'api'`,
+     WHERE tenant_id = $1 AND is_enabled = true AND sync_mode IN ('api', 'scheduled')`,
     [tenantId]
   )
 
