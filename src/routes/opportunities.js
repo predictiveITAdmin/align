@@ -78,6 +78,29 @@ router.get('/client-quotes', requireAuth, async (req, res) => {
   }
 })
 
+// ─── GET /api/opportunities/quote/:quoteId — single quote + items ────────────
+router.get('/quote/:quoteId', requireAuth, async (req, res) => {
+  try {
+    const quoteRes = await db.query(
+      `SELECT q.*, o.title AS opportunity_title, o.tenant_id
+       FROM quotes q
+       JOIN opportunities o ON o.id = q.opportunity_id
+       WHERE q.id = $1 AND o.tenant_id = $2`,
+      [req.params.quoteId, req.tenant.id]
+    )
+    if (!quoteRes.rows.length) return res.status(404).json({ error: 'Quote not found' })
+
+    const items = await db.query(
+      `SELECT * FROM quote_items WHERE quote_id = $1 ORDER BY id`,
+      [req.params.quoteId]
+    )
+    res.json({ data: { ...quoteRes.rows[0], items: items.rows } })
+  } catch (err) {
+    console.error('[opportunities] quote detail error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── POST /api/opportunities/sync — trigger sync (admin only) ────────────────
 router.post('/sync', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
   try {

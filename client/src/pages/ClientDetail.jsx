@@ -64,6 +64,7 @@ import HardwareTable from '../components/HardwareTable'
 import DrillDownModal from '../components/DrillDownModal'
 import { ClientBudgetPanel } from './ClientBudget'
 import RecEditModal from '../components/RecEditModal'
+import QuoteLineItems from '../components/QuoteLineItems'
 
 const TABS = ['Overview', 'Roadmap', 'Budget', 'Assessments', 'Recommendations', 'Hardware', 'Software', 'Contacts', 'SaaS Licenses', 'Profile', 'Standards', 'Orders']
 
@@ -4679,6 +4680,98 @@ function ClientOpportunitiesTab({ clientId }) {
 }
 
 // ─── Tab: Procurement / Quotes ────────────────────────────────────────────────
+const QUOTE_STATUS_STYLES = {
+  Active:   'bg-green-50 text-green-700',
+  Draft:    'bg-gray-100 text-gray-600',
+  Sent:     'bg-blue-50 text-blue-700',
+  Accepted: 'bg-emerald-50 text-emerald-700',
+  Expired:  'bg-orange-50 text-orange-700',
+  Rejected: 'bg-red-50 text-red-700',
+}
+
+// Single expandable quote row — lazy-loads items on first expand
+function QuoteRow({ q }) {
+  const [open, setOpen]     = useState(false)
+  const [items, setItems]   = useState(null)   // null = not yet loaded
+  const [loading, setLoading] = useState(false)
+
+  function toggle() {
+    setOpen(v => !v)
+    if (!open && items === null && parseInt(q.item_count) > 0) {
+      setLoading(true)
+      api.get(`/opportunities/quote/${q.id}`)
+        .then(r => setItems(r.data?.items || []))
+        .catch(() => setItems([]))
+        .finally(() => setLoading(false))
+    }
+  }
+
+  return (
+    <>
+      <tr
+        className={`cursor-pointer transition-colors ${open ? 'bg-gray-50' : 'hover:bg-gray-50/50'}`}
+        onClick={toggle}
+      >
+        <td className="px-4 py-3 w-8">
+          <ChevronRight size={14} className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+        </td>
+        <td className="px-4 py-3">
+          <p className="text-sm font-medium text-gray-900">{q.title || q.quote_number || `Quote ${q.autotask_quote_id}`}</p>
+          {q.quote_number && <p className="text-xs text-gray-400 font-mono">#{q.quote_number}</p>}
+        </td>
+        <td className="px-4 py-3 max-w-[180px]">
+          <p className="text-xs text-gray-700 truncate">{q.opportunity_title || '—'}</p>
+          {q.opportunity_stage && (
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${stagePillClass(q.opportunity_stage)}`}>
+              {q.opportunity_stage}
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-3">
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${QUOTE_STATUS_STYLES[q.status] || 'bg-gray-100 text-gray-600'}`}>
+            {q.status || '—'}
+          </span>
+        </td>
+        <td className="px-4 py-3 max-w-[140px]">
+          {q.po_numbers?.length > 0 ? (
+            <p className="font-mono text-xs text-gray-700 truncate">{q.po_numbers.slice(0, 2).join(', ')}</p>
+          ) : <span className="text-xs text-gray-300">—</span>}
+        </td>
+        <td className="px-4 py-3 text-center">
+          <span className={`text-xs font-medium ${parseInt(q.item_count) > 0 ? 'text-indigo-600' : 'text-gray-300'}`}>
+            {q.item_count || 0}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-right">
+          <span className="text-sm font-medium text-gray-900">{q.amount != null ? procFmt(q.amount) : '—'}</span>
+        </td>
+        <td className="px-4 py-3">
+          <span className="text-xs text-gray-500">{procDate(q.valid_until)}</span>
+        </td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={8} className="bg-gray-50 border-b border-gray-100 p-0">
+            {loading ? (
+              <div className="flex items-center gap-2 px-6 py-4 text-gray-400 text-xs">
+                <Loader2 size={14} className="animate-spin" /> Loading line items…
+              </div>
+            ) : (
+              <div className="overflow-x-auto border-t border-gray-100">
+                <QuoteLineItems
+                  items={items || []}
+                  quoteAmount={q.amount}
+                  compact={false}
+                />
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
 function ClientQuotesTab({ clientId }) {
   const [quotes, setQuotes] = useState([])
   const [loading, setLoading] = useState(true)
@@ -4696,21 +4789,19 @@ function ClientQuotesTab({ clientId }) {
       sub="Quotes sync from Autotask when opportunities are synced" />
   )
 
-  const QUOTE_STATUS_STYLES = {
-    Active: 'bg-green-50 text-green-700', Draft: 'bg-gray-100 text-gray-600',
-    Sent: 'bg-blue-50 text-blue-700', Accepted: 'bg-emerald-50 text-emerald-700',
-    Expired: 'bg-orange-50 text-orange-700', Rejected: 'bg-red-50 text-red-700',
-  }
-
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold text-gray-900">Quotes ({quotes.length})</h2>
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Quotes ({quotes.length})</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Click a row to expand line items · Toggle "Show cost" on expanded quote for margin details</p>
+        </div>
       </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50/50">
+              <th className="px-4 py-3 w-8" />
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quote</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Opportunity</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
@@ -4721,43 +4812,7 @@ function ClientQuotesTab({ clientId }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {quotes.map(q => (
-              <tr key={q.id} className="hover:bg-gray-50/50 transition-colors">
-                <td className="px-4 py-3">
-                  <p className="text-sm font-medium text-gray-900">{q.title || q.quote_number || `Quote ${q.autotask_quote_id}`}</p>
-                  {q.quote_number && <p className="text-xs text-gray-400 font-mono">#{q.quote_number}</p>}
-                </td>
-                <td className="px-4 py-3 max-w-[180px]">
-                  <p className="text-xs text-gray-700 truncate">{q.opportunity_title || '—'}</p>
-                  {q.opportunity_stage && (
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${stagePillClass(q.opportunity_stage)}`}>
-                      {q.opportunity_stage}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${QUOTE_STATUS_STYLES[q.status] || 'bg-gray-100 text-gray-600'}`}>
-                    {q.status || '—'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 max-w-[140px]">
-                  {q.po_numbers?.length > 0 ? (
-                    <p className="font-mono text-xs text-gray-700 truncate">{q.po_numbers.slice(0, 2).join(', ')}</p>
-                  ) : <span className="text-xs text-gray-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span className={`text-xs font-medium ${parseInt(q.item_count) > 0 ? 'text-indigo-600' : 'text-gray-300'}`}>
-                    {q.item_count || 0}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <span className="text-sm font-medium text-gray-900">{q.amount != null ? procFmt(q.amount) : '—'}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs text-gray-500">{procDate(q.valid_until)}</span>
-                </td>
-              </tr>
-            ))}
+            {quotes.map(q => <QuoteRow key={q.id} q={q} />)}
           </tbody>
         </table>
       </div>
@@ -4771,7 +4826,7 @@ function ClientOrdersTab({ clientId }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get(`/orders?client_id=${clientId}&limit=100`)
+    api.get(`/orders?client_id=${clientId}&limit=100&open_only=0`)
       .then(r => setOrders(r.data || []))
       .catch(console.error)
       .finally(() => setLoading(false))

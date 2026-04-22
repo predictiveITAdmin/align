@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
+import QuoteLineItems from '../components/QuoteLineItems'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(val) {
@@ -184,23 +185,12 @@ function OppDetail({ oppId, onClose }) {
                         <ChevronDown size={14} className={`text-gray-400 transition-transform ${openQuote === q.id ? '' : '-rotate-90'}`} />
                       </button>
                       {openQuote === q.id && (
-                        <div className="border-t border-gray-100 divide-y divide-gray-50">
-                          {q.items?.length > 0 ? q.items.map((item, i) => (
-                            <div key={item.id || i} className="px-3 py-2.5 text-xs">
-                              <div className="flex justify-between gap-4">
-                                <div className="min-w-0">
-                                  {item.mfg_part_number && <span className="font-mono text-gray-400 mr-1.5">{item.mfg_part_number}</span>}
-                                  <span className="text-gray-700">{item.description || '—'}</span>
-                                </div>
-                                <div className="text-right shrink-0 text-gray-600">
-                                  {item.quantity != null && <span>×{item.quantity}</span>}
-                                  {item.line_total != null && <span className="ml-2 font-medium">{fmt(item.line_total)}</span>}
-                                </div>
-                              </div>
-                            </div>
-                          )) : (
-                            <div className="px-3 py-2 text-xs text-gray-400">No line items synced</div>
-                          )}
+                        <div className="border-t border-gray-100 overflow-x-auto">
+                          <QuoteLineItems
+                            items={q.items || []}
+                            quoteAmount={q.amount}
+                            compact={true}
+                          />
                         </div>
                       )}
                     </div>
