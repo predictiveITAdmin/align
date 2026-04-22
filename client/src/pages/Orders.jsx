@@ -11,7 +11,8 @@ import PageHeader from '../components/PageHeader'
 const DISTRIBUTORS = [
   { value: '', label: 'All Distributors' },
   { value: 'ingram_xi', label: 'Ingram Micro' },
-  { value: 'tdsynnex_ecx', label: 'TD Synnex' },
+  { value: 'tdsynnex_esolutions', label: 'TD Synnex' },
+  { value: 'tdsynnex_ecx', label: 'TD Synnex (legacy)' },
   { value: 'amazon_business_csv', label: 'Amazon Business' },
   { value: 'provantage_manual', label: 'Provantage' },
 ]
@@ -55,10 +56,11 @@ const MATCH_STYLES = {
 }
 
 const DISTRIBUTOR_LABELS = {
-  ingram_xi: 'Ingram Micro',
-  tdsynnex_ecx: 'TD Synnex',
-  amazon_business_csv: 'Amazon Business',
-  provantage_manual: 'Provantage',
+  ingram_xi:            'Ingram Micro',
+  tdsynnex_esolutions:  'TD Synnex',
+  tdsynnex_ecx:         'TD Synnex',
+  amazon_business_csv:  'Amazon Business',
+  provantage_manual:    'Provantage',
 }
 
 function fmt(val) {
@@ -484,6 +486,8 @@ export default function Orders() {
   const [distFilter, setDistFilter]   = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [matchFilter, setMatchFilter] = useState('')
+  // openOnly: true = default view (non-delivered); false = include delivered/cancelled history
+  const [openOnly, setOpenOnly]       = useState(true)
 
   // UI state
   const [selectedOrderId, setSelectedOrderId] = useState(null)
@@ -508,13 +512,15 @@ export default function Orders() {
     if (distFilter)   params.set('distributor', distFilter)
     if (statusFilter) params.set('status', statusFilter)
     if (matchFilter)  params.set('match_status', matchFilter)
-    params.set('limit', '200')
+    // open_only=0 loads full history (inc. delivered/cancelled); default is open only
+    if (!openOnly)    params.set('open_only', '0')
+    params.set('limit', '500')
 
     api.get(`/orders?${params}`)
       .then(r => { setOrders(r.data || []); setTotal(r.total || 0) })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
-  }, [search, distFilter, statusFilter, matchFilter])
+  }, [search, distFilter, statusFilter, matchFilter, openOnly])
 
   useEffect(() => { loadStats() }, [loadStats])
 
@@ -555,6 +561,8 @@ export default function Orders() {
     if (field === 'match_status') {
       setMatchFilter(prev => prev === value ? '' : value)
     } else if (field === 'status') {
+      // Delivered/cancelled only appear in All History; auto-switch view
+      if (value === 'delivered' || value === 'cancelled') setOpenOnly(false)
       setStatusFilter(prev => prev === value ? '' : value)
     }
   }
@@ -641,6 +649,22 @@ export default function Orders() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        {/* Open / All toggle */}
+        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden text-xs">
+          <button
+            onClick={() => { setOpenOnly(true); setStatusFilter('') }}
+            className={`px-3 py-2 transition-colors ${openOnly ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+          >
+            Open Orders
+          </button>
+          <button
+            onClick={() => setOpenOnly(false)}
+            className={`px-3 py-2 transition-colors ${!openOnly ? 'bg-gray-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+          >
+            All History
+          </button>
+        </div>
+
         {/* Search */}
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -669,17 +693,19 @@ export default function Orders() {
           <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
         </div>
 
-        {/* Order status */}
-        <div className="relative">
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="appearance-none pl-3 pr-7 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-400"
-          >
-            {ORDER_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-          <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-        </div>
+        {/* Order status (only visible on "All History" since open-only handles it otherwise) */}
+        {!openOnly && (
+          <div className="relative">
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+              className="appearance-none pl-3 pr-7 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-400"
+            >
+              {ORDER_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          </div>
+        )}
 
         {/* Match status */}
         <div className="relative">
@@ -703,7 +729,10 @@ export default function Orders() {
           </button>
         )}
 
-        <span className="ml-auto text-xs text-gray-400">{total} order{total !== 1 ? 's' : ''}</span>
+        <span className="ml-auto text-xs text-gray-400">
+          {total} order{total !== 1 ? 's' : ''}
+          {openOnly && <span className="text-gray-300"> · Jan 2021 – present</span>}
+        </span>
       </div>
 
       {/* Orders table */}
@@ -729,7 +758,9 @@ export default function Orders() {
             <p className="text-xs mt-1">
               {(search || distFilter || statusFilter || matchFilter)
                 ? 'Try adjusting your filters'
-                : 'Configure a supplier in Settings and run a sync to import orders'}
+                : openOnly
+                  ? 'No open orders since Jan 2021 — click "All History" to see delivered orders, or sync a supplier'
+                  : 'Configure a supplier in Settings and run a sync to import orders'}
             </p>
           </div>
         )}

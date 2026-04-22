@@ -4554,7 +4554,9 @@ function ClientOpportunitiesTab({ clientId }) {
   const [showClosed, setShowClosed] = useState(false)
 
   useEffect(() => {
-    api.get(`/opportunities?client_id=${clientId}`)
+    // include_closed=1 so the "All" toggle shows full client history;
+    // the UI defaults to Active-only view via showClosed state.
+    api.get(`/opportunities?client_id=${clientId}&include_closed=1`)
       .then(r => setOpps(r.data || []))
       .catch(console.error)
       .finally(() => setLoading(false))

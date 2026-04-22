@@ -275,8 +275,9 @@ export default function Opportunities() {
     setError(null)
     const params = new URLSearchParams()
     if (search) params.set('search', search)
-    // Backend returns all statuses; we filter client-side for the open/all toggle
-    // so the stats tiles always have correct counts
+    // Always fetch all statuses — client-side filtering keeps stats tiles correct
+    // and allows toggling between open/won/lost/all without a round-trip.
+    params.set('include_closed', '1')
 
     api.get(`/opportunities?${params}`)
       .then(r => {
