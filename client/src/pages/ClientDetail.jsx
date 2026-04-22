@@ -63,7 +63,7 @@ import DrillDownModal from '../components/DrillDownModal'
 import { ClientBudgetPanel } from './ClientBudget'
 import RecEditModal from '../components/RecEditModal'
 
-const TABS = ['Overview', 'Roadmap', 'Budget', 'Assessments', 'Recommendations', 'Hardware', 'Software', 'Contacts', 'SaaS Licenses', 'Profile', 'Standards']
+const TABS = ['Overview', 'Roadmap', 'Budget', 'Assessments', 'Recommendations', 'Hardware', 'Software', 'Contacts', 'SaaS Licenses', 'Profile', 'Standards', 'Orders']
 
 
 const PLATFORM_COLORS = {
@@ -4504,12 +4504,100 @@ function ClientStandardsTab({ clientId, client }) {
   )
 }
 
+// ─── Tab: Orders ──────────────────────────────────────────────────────────────
+function ClientOrdersTab({ clientId }) {
+  const [orders, setOrders] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get(`/orders?client_id=${clientId}&limit=100`)
+      .then(r => setOrders(r.data || []))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [clientId])
+
+  const STATUS_STYLES = {
+    submitted: 'bg-blue-50 text-blue-700', confirmed: 'bg-indigo-50 text-indigo-700',
+    partially_shipped: 'bg-yellow-50 text-yellow-700', shipped: 'bg-cyan-50 text-cyan-700',
+    delivered: 'bg-green-50 text-green-700', backordered: 'bg-orange-50 text-orange-700',
+    cancelled: 'bg-red-50 text-red-700', exception: 'bg-gray-100 text-gray-600',
+  }
+  const MATCH_STYLES = {
+    matched: 'bg-green-50 text-green-700', needs_review: 'bg-yellow-50 text-yellow-700',
+    unmapped: 'bg-red-50 text-red-600',
+  }
+  const DIST = { ingram_xi: 'Ingram', tdsynnex_ecx: 'TD Synnex', amazon_business_csv: 'Amazon', provantage_manual: 'Provantage' }
+  function fmtCur(v) { return v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(v) }
+  function fmtD(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' }
+
+  if (loading) return <div className="text-center py-16 text-gray-400"><Loader2 size={20} className="animate-spin mx-auto" /></div>
+
+  if (!orders.length) return (
+    <div className="text-center py-16 text-gray-400">
+      <Package size={32} className="mx-auto mb-2 opacity-30" />
+      <p className="text-sm">No orders linked to this client yet</p>
+      <p className="text-xs mt-1 text-gray-400">
+        Import orders from distributors and map them in the{' '}
+        <a href="/orders" className="text-primary-600 hover:underline">Orders</a> page
+      </p>
+    </div>
+  )
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-semibold text-gray-900">Distributor Orders ({orders.length})</h2>
+        <a href="/orders" className="text-xs text-primary-600 hover:text-primary-800 flex items-center gap-1">
+          View all orders <ChevronRight size={12} />
+        </a>
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50/50">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Order #</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Distributor</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Opportunity</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {orders.map(ord => (
+              <tr key={ord.id} className="hover:bg-gray-50/50 transition-colors">
+                <td className="px-4 py-3">
+                  <span className="font-mono text-xs text-gray-700">{ord.distributor_order_id}</span>
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-600">{DIST[ord.distributor] || ord.distributor}</td>
+                <td className="px-4 py-3 font-mono text-xs text-gray-700">{ord.po_number || '—'}</td>
+                <td className="px-4 py-3 max-w-[160px]">
+                  <p className="text-xs text-gray-700 truncate">{ord.opportunity_title || '—'}</p>
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtD(ord.order_date)}</td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLES[ord.status] || 'bg-gray-100 text-gray-600'}`}>
+                    {ord.status?.replace(/_/g, ' ') || '—'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right text-xs font-medium text-gray-900">{fmtCur(ord.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── Tab key normalizer ───────────────────────────────────────────────────────
 const TAB_KEY_MAP = {
   'Overview': 'overview', 'Hardware': 'hardware', 'Recommendations': 'recommendations',
   'Assessments': 'assessments', 'Contacts': 'contacts', 'SaaS Licenses': 'saas-licenses',
   'Roadmap': 'roadmap', 'Budget': 'budget', 'Software': 'software',
   'Goals': 'goals', 'Activities': 'activities', 'Profile': 'profile', 'Standards': 'standards',
+  'Orders': 'orders',
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -4542,7 +4630,7 @@ export default function ClientDetail() {
     overview: 'Overview', goals: 'Goals', roadmap: 'Roadmap', budget: 'Budget',
     assessments: 'Assessments', recommendations: 'Recommendations', contacts: 'Contacts',
     hardware: 'Hardware', software: 'Software', 'saas-licenses': 'SaaS Licenses',
-    activities: 'Activities', profile: 'Profile', standards: 'Standards',
+    activities: 'Activities', profile: 'Profile', standards: 'Standards', orders: 'Orders',
   }
 
   return (
@@ -4597,6 +4685,7 @@ export default function ClientDetail() {
       {activeTab === 'saas-licenses'   && <LicensesTab clientId={id} />}
       {activeTab === 'profile'         && <ProfileTab clientId={id} client={client} onClientUpdate={setClient} />}
       {activeTab === 'standards'       && <ClientStandardsTab clientId={id} client={client} />}
+      {activeTab === 'orders'          && <ClientOrdersTab clientId={id} />}
     </div>
   )
 }

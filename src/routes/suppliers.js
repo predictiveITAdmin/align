@@ -154,6 +154,84 @@ router.post('/:id/test', requireAuth, requireRole('tenant_admin', 'global_admin'
   }
 })
 
+// ─── POST /api/suppliers/import/amazon — parse + import Amazon Business CSV ───
+// Accepts { csv_content: string } in JSON body.
+// Finds the tenant's amazon_business_csv supplier record (or creates a placeholder),
+// parses the CSV, upserts each order, runs the matcher, returns stats.
+router.post('/import/amazon', requireAuth, requireRole('tenant_admin', 'vcio', 'tam', 'global_admin'), async (req, res) => {
+  const { csv_content } = req.body
+  if (!csv_content || typeof csv_content !== 'string' || csv_content.trim().length < 10) {
+    return res.status(400).json({ error: 'csv_content is required' })
+  }
+
+  const amazonAdapter = getAdapter('amazon_business_csv')
+  if (!amazonAdapter) return res.status(500).json({ error: 'Amazon Business adapter not found' })
+
+  let normalizedOrders
+  try {
+    normalizedOrders = amazonAdapter.parseCsv(csv_content)
+  } catch (parseErr) {
+    return res.status(422).json({ error: 'CSV parse failed: ' + parseErr.message })
+  }
+
+  if (!normalizedOrders.length) {
+    return res.status(422).json({ error: 'No orders found in CSV. Check the file format.' })
+  }
+
+  // Find or create a supplier row for amazon_business_csv
+  let supplierRes = await db.query(
+    `SELECT id, tenant_id FROM suppliers WHERE tenant_id = $1 AND adapter_key = 'amazon_business_csv'`,
+    [req.tenant.id]
+  )
+
+  let supplierId
+  if (!supplierRes.rows.length) {
+    // Auto-create a minimal record so orders can reference it
+    const secret = crypto.randomBytes(32).toString('hex')
+    const suffix = crypto.randomBytes(8).toString('hex')
+    const newSupplier = await db.query(
+      `INSERT INTO suppliers (tenant_id, adapter_key, display_name, is_enabled, sync_mode,
+                              webhook_url_suffix, webhook_secret)
+       VALUES ($1, 'amazon_business_csv', 'Amazon Business', true, 'csv_import', $2, $3)
+       ON CONFLICT (tenant_id, adapter_key) DO UPDATE SET updated_at = NOW()
+       RETURNING id`,
+      [req.tenant.id, suffix, secret]
+    )
+    supplierId = newSupplier.rows[0].id
+  } else {
+    supplierId = supplierRes.rows[0].id
+  }
+
+  const { upsertOrder } = require('../services/distributorSync')
+  const { matchOrder }   = require('../services/orderMatcher')
+
+  let imported = 0, matched = 0, errors = 0
+  for (const order of normalizedOrders) {
+    try {
+      const orderId = await upsertOrder(req.tenant.id, supplierId, 'amazon_business_csv', order)
+      imported++
+      try {
+        const result = await matchOrder(req.tenant.id, orderId)
+        if (result.confidence >= 80) matched++
+      } catch {
+        // matcher failure non-fatal
+      }
+    } catch (err) {
+      errors++
+      console.error('[suppliers/import/amazon] upsert error:', err.message)
+    }
+  }
+
+  // Update last_sync_at
+  await db.query(
+    `UPDATE suppliers SET last_sync_at = NOW(), last_sync_status = 'ok' WHERE id = $1`,
+    [supplierId]
+  )
+
+  console.log(`[suppliers/import/amazon] tenant ${req.tenant.id}: parsed=${normalizedOrders.length} imported=${imported} matched=${matched} errors=${errors}`)
+  res.json({ status: 'ok', parsed: normalizedOrders.length, imported, matched, errors })
+})
+
 // ─── DELETE /api/suppliers/:id ───────────────────────────────────────────────
 router.delete('/:id', requireAuth, requireRole('tenant_admin', 'global_admin'), async (req, res) => {
   try {

@@ -25,6 +25,7 @@ import ClientBudget from './pages/ClientBudget'
 import Roadmap from './pages/Roadmap'
 import Software from './pages/Software'
 import Orders from './pages/Orders'
+import Opportunities from './pages/Opportunities'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -82,6 +83,7 @@ function AppRoutes() {
         <Route path="/budget/:clientId" element={<ClientBudget />} />
         <Route path="/software" element={<Software />} />
         <Route path="/orders" element={<Orders />} />
+        <Route path="/opportunities" element={<Opportunities />} />
         <Route path="/eos" element={<Placeholder />} />
         <Route path="/analytics" element={<Placeholder />} />
         <Route path="/reports" element={<Placeholder />} />
