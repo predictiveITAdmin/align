@@ -42,21 +42,16 @@ const DEFAULT_POS_URL = 'https://ws.synnex.com/webservice/posserviceV02'
 const REQUIRED_FIELDS = [
   {
     name: 'username', label: 'API Username', type: 'text', secret: false,
-    help: 'eSolutions API username (e.g. pitapi)',
+    help: 'eSolutions API username (e.g. 6-insidesales@yourcompany.com)',
   },
   {
     name: 'password', label: 'API Password', type: 'text', secret: true,
-    help: 'eSolutions API password (12-64 chars, at least one special char)',
+    help: 'eSolutions API password',
   },
   {
     name: 'customer_number', label: 'Customer Account Number', type: 'text', secret: false,
-    help: 'Your TD Synnex account number (693316 or 791829)',
+    help: 'Your TD Synnex account number (e.g. 693316)',
     default: '693316',
-  },
-  {
-    name: 'pos_url', label: 'POS Endpoint URL', type: 'text', secret: false,
-    help: 'POS service endpoint — default: https://ws.synnex.com/webservice/posserviceV02',
-    default: DEFAULT_POS_URL,
   },
 ]
 
@@ -106,8 +101,8 @@ function buildGetPOStatusEnvelope(creds, customerNumber, poNo) {
 
 // ─── HTTP client ──────────────────────────────────────────────────────────────
 // No HTTP-level auth — credentials are in the WS-Security SOAP header
-function buildClient(creds) {
-  const posUrl = creds.pos_url || DEFAULT_POS_URL
+function buildClient(creds, config) {
+  const posUrl = config?.base_url || creds?.pos_url || DEFAULT_POS_URL
   return axios.create({
     baseURL: posUrl,
     headers: {
@@ -241,7 +236,7 @@ function normalizeOrder(poNo, customerNumber, raw) {
 // ─── testConnection ───────────────────────────────────────────────────────────
 async function testConnection(creds, config = {}) {
   const accountNum = creds.customer_number || '693316'
-  const client = buildClient(creds)
+  const client = buildClient(creds, config)
   try {
     const body = buildGetPOStatusEnvelope(creds, accountNum, 'TEST-CONN-0000')
     const res  = await client.post('', body)
@@ -336,7 +331,7 @@ module.exports = {
   requiredFields:     REQUIRED_FIELDS,
   supportedSyncModes: ['api'],
   syncStrategy:       'po_driven',   // signals that fetchOrders needs poNumbers passed in
-  defaults:           { pos_url: DEFAULT_POS_URL, customer_number: '693316' },
+  defaults:           { base_url: DEFAULT_POS_URL, customer_number: '693316' },
   testConnection,
   fetchOrders,
   fetchOrder,
