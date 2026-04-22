@@ -1,24 +1,26 @@
 #!/bin/bash
-# Deploy Align frontend to /var/www/align
-# Usage: ./deploy.sh
-
+# deploy.sh — Build frontend and push to nginx webroot
+# Run this after every frontend change: ./deploy.sh
 set -e
 
 echo "[deploy] Building frontend..."
 cd /opt/align/client
-npx vite build --mode development
+npm run build
 
-echo "[deploy] Copying to /var/www/align..."
-sudo cp -r /opt/align/client/dist/* /var/www/align/
+echo "[deploy] Copying to /var/www/align/..."
+sudo cp -r /opt/align/client/dist/. /var/www/align/
 
-# Remove old hashed asset files (keep only what index.html references)
-CURRENT_JS=$(grep -oP 'src="/assets/[^"]+\.js"' /var/www/align/index.html | grep -oP 'index-[^"]+\.js')
-CURRENT_CSS=$(grep -oP 'href="/assets/[^"]+\.css"' /var/www/align/index.html | grep -oP 'index-[^"]+\.css')
-sudo find /var/www/align/assets/ -name "*.js" ! -name "$CURRENT_JS" -delete 2>/dev/null || true
-sudo find /var/www/align/assets/ -name "*.css" ! -name "$CURRENT_CSS" -delete 2>/dev/null || true
+echo "[deploy] Cleaning stale assets..."
+cd /var/www/align/assets
+LIVE_JS=$(grep -oP '(?<=src=")[^"]+(?=")' /var/www/align/index.html | xargs -I{} basename {})
+LIVE_CSS=$(grep -oP '(?<=href=")[^"]+(?=")' /var/www/align/index.html | grep assets | xargs -I{} basename {})
+for f in *.js *.css; do
+  if [[ "$f" != "$LIVE_JS" && "$f" != "$LIVE_CSS" ]]; then
+    sudo rm "$f"
+  fi
+done
 
-echo "[deploy] Restarting API..."
+echo "[deploy] Restarting backend..."
 pm2 restart align
 
-echo "[deploy] Done. Files in /var/www/align/assets/:"
-ls /var/www/align/assets/
+echo "[deploy] Done — $(ls /var/www/align/assets/)"

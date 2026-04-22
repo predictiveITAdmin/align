@@ -84,12 +84,20 @@ Requirements locked, distributor API research is the next step (Ingram Micro, TD
 ## How to Build & Deploy
 
 ```bash
-# Backend changes
-pm2 restart align --update-env
+# ⚠️  IMPORTANT: nginx serves from /var/www/align/ — NOT /opt/align/client/dist/
+# You MUST run the deploy script after any frontend change, or users won't see it.
 
-# Frontend build + deploy — verify the nginx root path for Align
-cd /opt/align/client && npx vite build
-# Then copy dist/ to the configured nginx web root
+# Full deploy (frontend + backend) — USE THIS:
+/opt/align/deploy.sh
+
+# What deploy.sh does:
+#   1. npm run build  (outputs to /opt/align/client/dist/)
+#   2. sudo cp -r /opt/align/client/dist/. /var/www/align/   ← the step that matters
+#   3. Cleans stale hashed asset files from /var/www/align/assets/
+#   4. pm2 restart align
+
+# Backend-only change (no frontend):
+pm2 restart align
 ```
 
 ---
