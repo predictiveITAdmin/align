@@ -91,7 +91,10 @@ export default function QuoteLineItems({ items = [], quoteAmount = null, compact
               ? Number(item.line_total)
               : item.unit_price != null ? Number(item.unit_price) * qty : null
             const lineProfit = (extPrice != null && extCost != null) ? extPrice - extCost : null
-            const lineMarkup = (extCost != null && extCost > 0 && lineProfit != null) ? (lineProfit / extCost) * 100 : null
+            // Use AT markupRate if available, otherwise calculate
+            const atMarkup   = item.metadata?.markupRate != null ? Number(item.metadata.markupRate) : null
+            const lineMarkup = atMarkup != null ? atMarkup
+              : (extCost != null && extCost > 0 && lineProfit != null) ? (lineProfit / extCost) * 100 : null
 
             return (
               <tr key={item.id || i} className="hover:bg-gray-50/40 transition-colors">
@@ -99,8 +102,11 @@ export default function QuoteLineItems({ items = [], quoteAmount = null, compact
                 <td className={`${px} ${py}`}>
                   <span className="font-mono text-xs text-gray-600">{item.mfg_part_number || '—'}</span>
                 </td>
-                <td className={`${px} ${py} max-w-[240px]`}>
-                  <p className={`${textSz} text-gray-800`}>{item.description || '—'}</p>
+                <td className={`${px} ${py} max-w-[320px]`}>
+                  <p className={`${textSz} font-medium text-gray-800`}>{item.description || '—'}</p>
+                  {item.long_description && (
+                    <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{item.long_description}</p>
+                  )}
                   {item.manufacturer && (
                     <p className="text-[10px] text-gray-400 mt-0.5">{item.manufacturer}</p>
                   )}

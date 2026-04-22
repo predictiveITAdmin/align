@@ -425,28 +425,37 @@ async function syncQuoteItems(tenantId) {
     try {
       const filter = [{ field: 'quoteID', op: 'eq', value: quote.autotask_quote_id }]
       for await (const qi of queryAll(client, 'QuoteItems', filter)) {
+        // AT QuoteItem field mapping:
+        //   name        = short product name / SKU code (e.g. "VD5D2")
+        //   description = long product description (e.g. "Dell Pro Micro - Intel Core Ultra 5...")
+        // We store both: description = name (short), long_description = description (full text)
+        const shortDesc = qi.name || null
+        const longDesc  = (qi.description && qi.description !== qi.name) ? qi.description : null
+
         await db.query(`
           INSERT INTO quote_items (
             quote_id, autotask_quote_item_id,
-            mfg_part_number, manufacturer, description,
+            mfg_part_number, manufacturer, description, long_description,
             quantity, unit_cost, unit_price, line_total,
             metadata
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
           ON CONFLICT (autotask_quote_item_id) DO UPDATE SET
-            mfg_part_number = EXCLUDED.mfg_part_number,
-            manufacturer    = EXCLUDED.manufacturer,
-            description     = EXCLUDED.description,
-            quantity        = EXCLUDED.quantity,
-            unit_cost       = EXCLUDED.unit_cost,
-            unit_price      = EXCLUDED.unit_price,
-            line_total      = EXCLUDED.line_total,
-            metadata        = EXCLUDED.metadata
+            mfg_part_number  = EXCLUDED.mfg_part_number,
+            manufacturer     = EXCLUDED.manufacturer,
+            description      = EXCLUDED.description,
+            long_description = EXCLUDED.long_description,
+            quantity         = EXCLUDED.quantity,
+            unit_cost        = EXCLUDED.unit_cost,
+            unit_price       = EXCLUDED.unit_price,
+            line_total       = EXCLUDED.line_total,
+            metadata         = EXCLUDED.metadata
         `, [
           quote.id,
           qi.id,
-          qi.manufacturerProductNumber || qi.productID || null,  // Autotask field varies
+          qi.manufacturerProductNumber || qi.productID || null,
           qi.manufacturer || null,
-          qi.name || qi.description || null,
+          shortDesc,
+          longDesc,
           qi.quantity ?? null,
           qi.unitCost ?? null,
           qi.unitPrice ?? null,
