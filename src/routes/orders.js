@@ -6,6 +6,8 @@ const router = express.Router()
 const db = require('../db')
 const { requireAuth, requireRole } = require('../middleware/auth')
 const opportunitiesSync = require('../services/opportunitiesSync')
+const { matchAllUnmatched, getMatchSuggestions } = require('../services/orderMatcher')
+const { syncAllSuppliers } = require('../services/distributorSync')
 
 // ─── GET /api/orders — list with filters ─────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
@@ -160,6 +162,40 @@ router.post('/:id/map', requireAuth, requireRole('tenant_admin', 'vcio', 'tam', 
     res.json({ status: 'ok' })
   } catch (err) {
     console.error('[orders] map error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── GET /api/orders/:id/match-suggestions — top candidate Opportunities ─────
+router.get('/:id/match-suggestions', requireAuth, async (req, res) => {
+  const { q } = req.query
+  try {
+    const suggestions = await getMatchSuggestions(req.tenant.id, req.params.id, q || null)
+    res.json({ data: suggestions })
+  } catch (err) {
+    console.error('[orders] match-suggestions error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── POST /api/orders/match-all — run matcher across all unmapped orders ─────
+router.post('/match-all', requireAuth, requireRole('tenant_admin', 'vcio', 'tam', 'global_admin'), async (req, res) => {
+  try {
+    const result = await matchAllUnmatched(req.tenant.id)
+    res.json({ status: 'ok', ...result })
+  } catch (err) {
+    console.error('[orders] match-all error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── POST /api/orders/sync — trigger distributor API pull for this tenant ────
+router.post('/sync', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
+  try {
+    const result = await syncAllSuppliers(req.tenant.id)
+    res.json({ status: 'ok', ...result })
+  } catch (err) {
+    console.error('[orders] sync error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

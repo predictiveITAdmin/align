@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Building2, ShieldCheck, BookOpen, ClipboardList,
   Monitor, Map, DollarSign, Target, BarChart3, FileText, Settings,
   ChevronLeft, ChevronRight, ChevronDown, Package, AppWindow,
-  Users, CheckSquare, UserCog, ListChecks,
+  Users, CheckSquare, UserCog, ListChecks, ShoppingCart,
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '../lib/cn'
@@ -21,6 +21,7 @@ const globalNavItems = [
       { to: '/software',      icon: AppWindow, label: 'Software' },
     ],
   },
+  { to: '/orders',      icon: ShoppingCart, label: 'Orders' },
   { to: '/standards',   icon: BookOpen,  label: 'Standards' },
   { to: '/analytics',   icon: BarChart3, label: 'Analytics' },
   { to: '/reports',     icon: FileText,  label: 'Reports' },

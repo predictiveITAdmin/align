@@ -24,6 +24,8 @@ const { syncAuvik }     = require('./auvikSync')
 const { syncCSAT }      = require('./csatSync')
 const { syncMsPartner } = require('./msPartnerSync')
 const { syncPax8 }      = require('./pax8Sync')
+const { syncAll: syncOpportunities } = require('./opportunitiesSync')
+const { syncAllSuppliers }           = require('./distributorSync')
 
 const SYNC_INTERVAL_MS = 2 * 60 * 60 * 1000  // 2 hours
 const INITIAL_DELAY_MS = 60 * 1000            // wait 1 min after startup before first run
@@ -31,17 +33,18 @@ const INITIAL_DELAY_MS = 60 * 1000            // wait 1 min after startup before
 // Map sync_sources.source_type → array of { label, fn } to run in order
 const SYNC_MAP = {
   autotask:             [
-    { label: 'clients',  fn: syncClients  },
-    { label: 'assets',   fn: syncAssets   },
-    { label: 'contacts', fn: syncContacts },
+    { label: 'clients',       fn: syncClients       },
+    { label: 'assets',        fn: syncAssets        },
+    { label: 'contacts',      fn: syncContacts      },
+    { label: 'opportunities', fn: syncOpportunities },  // order management
   ],
-  datto_rmm:            [{ label: 'assets',    fn: syncDattoRmm  }],
-  it_glue:              [{ label: 'it_glue',   fn: syncItGlue    }],
-  saas_alerts:          [{ label: 'licenses',  fn: syncSaasAlerts }],
-  auvik:                [{ label: 'network',   fn: syncAuvik     }],
-  customer_thermometer: [{ label: 'csat',      fn: syncCSAT      }],
-  ms_partner:           [{ label: 'licenses',  fn: syncMsPartner }],
-  pax8:                 [{ label: 'subscriptions', fn: syncPax8 }],
+  datto_rmm:            [{ label: 'assets',        fn: syncDattoRmm     }],
+  it_glue:              [{ label: 'it_glue',        fn: syncItGlue       }],
+  saas_alerts:          [{ label: 'licenses',       fn: syncSaasAlerts   }],
+  auvik:                [{ label: 'network',         fn: syncAuvik        }],
+  customer_thermometer: [{ label: 'csat',            fn: syncCSAT         }],
+  ms_partner:           [{ label: 'licenses',        fn: syncMsPartner   }],
+  pax8:                 [{ label: 'subscriptions',   fn: syncPax8         }],
 }
 
 /**
@@ -108,6 +111,10 @@ async function runAllSyncs() {
         await runSync(slug, sourceType, label, fn, tenantId)
       }
     }
+
+    // Distributor syncs run for every tenant that has enabled suppliers
+    // (not gated by sync_sources — suppliers table is self-sufficient)
+    await runSync(slug, 'distributors', 'orders', syncAllSuppliers, tenantId)
   }
 
   console.log(`[scheduler] ── Sync cycle complete at ${new Date().toISOString()} ──`)
