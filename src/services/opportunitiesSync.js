@@ -175,20 +175,31 @@ async function syncOpportunities(tenantId) {
   )
   const since = sinceRow.rows[0]?.t
 
-  // Build AT filter
-  const filter = [{ field: 'id', op: 'gt', value: 0 }]
-  if (since) {
-    filter.push({ field: 'lastActivity', op: 'gte', value: since.toISOString() })
-  }
-  // Date range filter — only sync opportunities created after min_create_date
-  if (cfg.min_create_date) {
-    filter.push({ field: 'createDate', op: 'gte', value: new Date(cfg.min_create_date).toISOString() })
-  }
-
   console.log('[opportunitiesSync] pulling Opportunities, since:', since || '(full)', '| settings:', cfg)
   let count = 0, skipped = 0, errors = 0
 
-  for await (const opp of queryAll(client, 'Opportunities', filter)) {
+  // Strategy: always pull ALL Active opps (status=1) so we never miss new ones;
+  // plus pull any other-status opps changed since last sync (incremental for closed/lost).
+  const activeFilter = [{ field: 'status', op: 'eq', value: 1 }]
+  if (cfg.min_create_date) {
+    activeFilter.push({ field: 'createDate', op: 'gte', value: new Date(cfg.min_create_date).toISOString() })
+  }
+
+  const changedFilter = [{ field: 'id', op: 'gt', value: 0 }, { field: 'status', op: 'noteq', value: 1 }]
+  if (since) {
+    changedFilter.push({ field: 'lastActivity', op: 'gte', value: since.toISOString() })
+  }
+  if (cfg.min_create_date) {
+    changedFilter.push({ field: 'createDate', op: 'gte', value: new Date(cfg.min_create_date).toISOString() })
+  }
+
+  // Run Active pass first, then incremental changed-status pass
+  async function* allOpps() {
+    yield* queryAll(client, 'Opportunities', activeFilter)
+    yield* queryAll(client, 'Opportunities', changedFilter)
+  }
+
+  for await (const opp of allOpps()) {
     try {
       // Find local client by autotask_company_id
       // Autotask Opportunities API uses "companyID" (not "accountID")
