@@ -66,6 +66,36 @@ function stagePillClass(stage) {
   return 'bg-gray-100 text-gray-600'
 }
 
+// ─── Date preset helpers ──────────────────────────────────────────────────────
+// Returns {from, to} Date objects for a preset
+function datePresetRange(preset) {
+  const now = new Date()
+  const startOfWeek = (d) => { const x = new Date(d); x.setDate(d.getDate() - d.getDay()); x.setHours(0,0,0,0); return x }
+  const endOfWeek   = (d) => { const x = new Date(d); x.setDate(d.getDate() + (6 - d.getDay())); x.setHours(23,59,59,999); return x }
+  switch (preset) {
+    case 'this_week':   return { from: startOfWeek(now), to: endOfWeek(now) }
+    case 'last_week':   { const lw = new Date(now); lw.setDate(now.getDate()-7); return { from: startOfWeek(lw), to: endOfWeek(lw) } }
+    case 'this_month':  { const f=new Date(now.getFullYear(),now.getMonth(),1); const t=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59); return {from:f,to:t} }
+    case 'last_month':  { const f=new Date(now.getFullYear(),now.getMonth()-1,1); const t=new Date(now.getFullYear(),now.getMonth(),0,23,59,59); return {from:f,to:t} }
+    case 'next_month':  { const f=new Date(now.getFullYear(),now.getMonth()+1,1); const t=new Date(now.getFullYear(),now.getMonth()+2,0,23,59,59); return {from:f,to:t} }
+    default: return null
+  }
+}
+
+function inDateRange(dateStr, preset, fromStr, toStr) {
+  if (!preset && !fromStr && !toStr) return true
+  if (!dateStr) return false
+  const d = new Date(dateStr)
+  if (preset && preset !== 'custom') {
+    const r = datePresetRange(preset)
+    if (!r) return true
+    return d >= r.from && d <= r.to
+  }
+  if (fromStr && d < new Date(fromStr)) return false
+  if (toStr && d > new Date(toStr + 'T23:59:59')) return false
+  return true
+}
+
 // ─── Sort icon ────────────────────────────────────────────────────────────────
 function SortIcon({ col, sortKey, sortDir }) {
   if (sortKey !== col) return <ChevronsUpDown size={11} className="text-gray-300 ml-1 inline" />
@@ -123,6 +153,119 @@ function ColFilter({ label, options, value, onChange, onClear, align = 'left' })
   )
 }
 
+// ─── DateRangeFilter popover ──────────────────────────────────────────────────
+function DateRangeFilter({ label, preset, fromDate, toDate, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef()
+  const active = !!(preset || fromDate || toDate)
+
+  useEffect(() => {
+    function h(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const PRESETS = [
+    { label: 'This Week',   value: 'this_week' },
+    { label: 'Last Week',   value: 'last_week' },
+    { label: 'This Month',  value: 'this_month' },
+    { label: 'Last Month',  value: 'last_month' },
+    { label: 'Next Month',  value: 'next_month' },
+  ]
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        className={`ml-1 inline-flex items-center justify-center w-4 h-4 rounded transition-colors ${
+          active ? 'text-primary-600 bg-primary-50' : 'text-gray-300 hover:text-gray-500'
+        }`}
+        title={active ? (preset || `${fromDate||''}–${toDate||''}`) : `Filter by ${label}`}
+      >
+        <Filter size={10} />
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg p-3 min-w-[200px] left-0">
+          <div className="text-xs font-semibold text-gray-400 pb-1.5 mb-1.5 border-b border-gray-100">
+            {label} filter
+          </div>
+          {PRESETS.map(p => (
+            <button key={p.value}
+              onClick={() => onChange({ preset: preset === p.value ? '' : p.value, from: '', to: '' })}
+              className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-gray-50 ${preset === p.value ? 'text-primary-600 font-medium bg-primary-50' : 'text-gray-600'}`}>
+              {p.label}
+            </button>
+          ))}
+          <div className="border-t border-gray-100 mt-1.5 pt-1.5">
+            <div className="text-xs text-gray-400 mb-1">Custom range</div>
+            <div className="flex gap-1 items-center">
+              <input type="date" value={fromDate} onChange={e => onChange({ preset: 'custom', from: e.target.value, to: toDate })}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 w-[110px] focus:outline-none focus:ring-1 focus:ring-primary-300" />
+              <span className="text-gray-300 text-xs">–</span>
+              <input type="date" value={toDate} onChange={e => onChange({ preset: 'custom', from: fromDate, to: e.target.value })}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 w-[110px] focus:outline-none focus:ring-1 focus:ring-primary-300" />
+            </div>
+          </div>
+          {active && (
+            <button onClick={() => onChange({ preset: '', from: '', to: '' })}
+              className="w-full mt-2 text-xs text-red-500 hover:text-red-700 text-left px-1">
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── MultiSelectFilter popover ────────────────────────────────────────────────
+function MultiSelectFilter({ label, options, value = [], onChange, align = 'left' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef()
+  const active = value.length > 0
+
+  useEffect(() => {
+    function h(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  function toggle(opt) {
+    onChange(value.includes(opt) ? value.filter(v => v !== opt) : [...value, opt])
+  }
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        className={`ml-1 inline-flex items-center justify-center w-4 h-4 rounded transition-colors ${
+          active ? 'text-primary-600 bg-primary-50' : 'text-gray-300 hover:text-gray-500'
+        }`}
+        title={active ? value.join(', ') : `Filter ${label}`}
+      >
+        <Filter size={10} />
+      </button>
+      {open && (
+        <div className={`absolute top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg p-2 min-w-[200px] max-h-[280px] overflow-y-auto ${align === 'right' ? 'right-0' : 'left-0'}`}>
+          <div className="text-xs font-semibold text-gray-400 px-2 pb-1 border-b border-gray-100 mb-1 flex justify-between">
+            <span>Filter: {label}</span>
+            {active && <button onClick={() => onChange([])} className="text-red-400 hover:text-red-600 text-xs">Clear</button>}
+          </div>
+          {options.map(opt => (
+            <button key={opt} onClick={() => toggle(opt)}
+              className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-gray-50 flex items-center gap-2 ${value.includes(opt) ? 'text-primary-600 font-medium' : 'text-gray-600'}`}>
+              <span className={`w-3 h-3 rounded border flex-shrink-0 flex items-center justify-center ${value.includes(opt) ? 'bg-primary-600 border-primary-600' : 'border-gray-300'}`}>
+                {value.includes(opt) && <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 8 8"><path d="M1 3.5L3 5.5 7 1.5" stroke="white" strokeWidth="1.5" fill="none"/></svg>}
+              </span>
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Opportunity Detail Slide-over ────────────────────────────────────────────
 function OppDetail({ oppId, onClose }) {
   const [opp, setOpp]         = useState(null)
@@ -168,10 +311,14 @@ function OppDetail({ oppId, onClose }) {
           <div className="flex-1 overflow-y-auto">
             <div className="grid grid-cols-2 gap-px bg-gray-100 border-b border-gray-100">
               {[
-                { label: 'Stage',      value: opp.stage || '—' },
-                { label: 'Amount',     value: fmt(opp.amount) },
-                { label: 'Close Date', value: fmtDate(opp.expected_close) },
-                { label: 'PO Numbers', value: opp.po_numbers?.join(', ') || '—' },
+                { label: 'Stage',       value: opp.stage || '—' },
+                { label: 'Amount',      value: fmt(opp.amount) },
+                { label: 'Owner',       value: opp.assigned_resource_name || '—' },
+                { label: 'Category',    value: opp.category || '—' },
+                { label: 'Close Date',  value: fmtDate(opp.expected_close) },
+                { label: 'Create Date', value: fmtDate(opp.created_date) },
+                { label: 'Closed Date', value: fmtDate(opp.closed_date) },
+                { label: 'PO Numbers',  value: opp.po_numbers?.join(', ') || '—' },
               ].map(f => (
                 <div key={f.label} className="bg-white px-4 py-3">
                   <p className="text-xs text-gray-400">{f.label}</p>
@@ -258,11 +405,30 @@ export default function Opportunities() {
   const [statusFilter, setStatusFilter] = useState('open')
 
   // Column-level filters
-  const [colFilters, setColFilters] = useState({ status: '', stage: '', client_name: '' })
+  const [colFilters, setColFilters] = useState({ status: '', stage: '', category: '' })
+
+  // Multi-select filters
+  const [ownerFilter, setOwnerFilter]   = useState([])
+  const [clientFilter, setClientFilter] = useState([])
+
+  // Date range filters
+  const [dateFilters, setDateFilters] = useState({
+    close_date_preset: '',
+    close_date_from: '',
+    close_date_to: '',
+    create_date_preset: '',
+    create_date_from: '',
+    create_date_to: '',
+    closed_date_preset: '',
+    closed_date_from: '',
+    closed_date_to: '',
+  })
 
   // Derived option lists (from loaded data)
   const [stageOptions, setStageOptions]   = useState([])
   const [clientOptions, setClientOptions] = useState([])
+  const [ownerOptions, setOwnerOptions]   = useState([])
+  const [categoryOptions, setCategoryOptions] = useState([])
 
   // Sort
   const [sortKey, setSortKey] = useState('created_date')
@@ -273,6 +439,10 @@ export default function Opportunities() {
 
   function setColFilter(col, val) {
     setColFilters(prev => ({ ...prev, [col]: val }))
+  }
+
+  function setDateFilter(field, val) {
+    setDateFilters(prev => ({ ...prev, [field]: val }))
   }
 
   const loadOpps = useCallback(() => {
@@ -291,6 +461,8 @@ export default function Opportunities() {
         setTotal(r.total || data.length)
         setStageOptions([...new Set(data.map(o => o.stage).filter(Boolean))].sort())
         setClientOptions([...new Set(data.map(o => o.client_name).filter(Boolean))].sort())
+        setOwnerOptions([...new Set(data.map(o => o.assigned_resource_name).filter(Boolean))].sort())
+        setCategoryOptions([...new Set(data.map(o => o.category).filter(Boolean))].sort())
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
@@ -328,18 +500,29 @@ export default function Opportunities() {
     else if (statusFilter === 'lost') rows = rows.filter(o => LOST_STATUSES.has(o.status))
     // else 'all' — no status filter
     // Apply column-level filters on top
-    if (colFilters.status)      rows = rows.filter(o => o.status === colFilters.status)
-    if (colFilters.stage)       rows = rows.filter(o => o.stage === colFilters.stage)
-    if (colFilters.client_name) rows = rows.filter(o => o.client_name === colFilters.client_name)
+    if (colFilters.status)   rows = rows.filter(o => o.status === colFilters.status)
+    if (colFilters.stage)    rows = rows.filter(o => o.stage === colFilters.stage)
+    if (colFilters.category) rows = rows.filter(o => o.category === colFilters.category)
+    // Multi-select client filter
+    if (clientFilter.length > 0) rows = rows.filter(o => clientFilter.includes(o.client_name))
+    // Multi-select owner filter
+    if (ownerFilter.length > 0) rows = rows.filter(o => ownerFilter.includes(o.assigned_resource_name))
+    // Date range filters
+    if (dateFilters.close_date_preset || dateFilters.close_date_from || dateFilters.close_date_to)
+      rows = rows.filter(o => inDateRange(o.expected_close, dateFilters.close_date_preset, dateFilters.close_date_from, dateFilters.close_date_to))
+    if (dateFilters.create_date_preset || dateFilters.create_date_from || dateFilters.create_date_to)
+      rows = rows.filter(o => inDateRange(o.created_date, dateFilters.create_date_preset, dateFilters.create_date_from, dateFilters.create_date_to))
+    if (dateFilters.closed_date_preset || dateFilters.closed_date_from || dateFilters.closed_date_to)
+      rows = rows.filter(o => inDateRange(o.closed_date, dateFilters.closed_date_preset, dateFilters.closed_date_from, dateFilters.closed_date_to))
     return rows
-  }, [opps, statusFilter, colFilters])
+  }, [opps, statusFilter, colFilters, clientFilter, ownerFilter, dateFilters])
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
       let av, bv
       if (sortKey === 'amount') {
         av = a.amount ?? -Infinity; bv = b.amount ?? -Infinity
-      } else if (sortKey === 'expected_close' || sortKey === 'created_date') {
+      } else if (sortKey === 'expected_close' || sortKey === 'created_date' || sortKey === 'closed_date') {
         av = a[sortKey] ? new Date(a[sortKey]).getTime() : 0
         bv = b[sortKey] ? new Date(b[sortKey]).getTime() : 0
       } else if (sortKey === 'quote_count' || sortKey === 'order_count') {
@@ -365,9 +548,24 @@ export default function Opportunities() {
   }), [opps, filtered])
 
   const hasColFilters = Object.values(colFilters).some(Boolean)
+  const hasMultiFilters = clientFilter.length > 0 || ownerFilter.length > 0
+  const hasDateFilters = Object.values(dateFilters).some(Boolean)
+  const hasAnyFilter = hasColFilters || hasMultiFilters || hasDateFilters
+
+  function clearAllFilters() {
+    setSearch('')
+    setColFilters({ status: '', stage: '', category: '' })
+    setClientFilter([])
+    setOwnerFilter([])
+    setDateFilters({
+      close_date_preset: '', close_date_from: '', close_date_to: '',
+      create_date_preset: '', create_date_from: '', create_date_to: '',
+      closed_date_preset: '', closed_date_from: '', closed_date_to: '',
+    })
+  }
 
   // Sortable + filterable column header
-  function Th({ col, label, filterCol, filterOptions, className = 'text-left', alignFilter = 'left' }) {
+  function Th({ col, label, filterCol, filterOptions, filterType, filterValue, onFilterChange, className = 'text-left', alignFilter = 'left', datePreset, dateFrom, dateTo, onDateChange }) {
     return (
       <th
         className={`${className} px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider`}
@@ -375,7 +573,7 @@ export default function Opportunities() {
         style={{ cursor: 'pointer', userSelect: 'none' }}
       >
         {label}<SortIcon col={col} sortKey={sortKey} sortDir={sortDir} />
-        {filterCol && filterOptions && (
+        {filterType === 'single' && filterCol && filterOptions && (
           <ColFilter
             label={label}
             options={filterOptions}
@@ -384,12 +582,40 @@ export default function Opportunities() {
             align={alignFilter}
           />
         )}
+        {filterType === 'multi' && filterOptions && (
+          <MultiSelectFilter
+            label={label}
+            options={filterOptions}
+            value={filterValue}
+            onChange={onFilterChange}
+            align={alignFilter}
+          />
+        )}
+        {filterType === 'date' && (
+          <DateRangeFilter
+            label={label}
+            preset={datePreset}
+            fromDate={dateFrom}
+            toDate={dateTo}
+            onChange={onDateChange}
+          />
+        )}
       </th>
     )
   }
 
+  // Helper to show date filter label in chips
+  function dateFilterLabel(preset, from, to) {
+    if (preset && preset !== 'custom') {
+      const map = { this_week: 'This Week', last_week: 'Last Week', this_month: 'This Month', last_month: 'Last Month', next_month: 'Next Month' }
+      return map[preset] || preset
+    }
+    if (from || to) return `${from || '…'} – ${to || '…'}`
+    return ''
+  }
+
   return (
-    <div className="max-w-[1400px]">
+    <div className="max-w-[1600px]">
       <PageHeader
         icon={Target}
         title="Opportunities"
@@ -471,9 +697,10 @@ export default function Opportunities() {
           )}
         </div>
 
-        {/* Active column filters summary */}
-        {hasColFilters && (
-          <div className="flex items-center gap-1.5">
+        {/* Active filter chips */}
+        {hasAnyFilter && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Column single-select filters */}
             {Object.entries(colFilters).filter(([, v]) => v).map(([col, val]) => (
               <span key={col} className="inline-flex items-center gap-1 px-2 py-1 bg-primary-50 text-primary-700 text-xs rounded-lg">
                 <Filter size={10} />
@@ -483,11 +710,53 @@ export default function Opportunities() {
                 </button>
               </span>
             ))}
+            {/* Multi-select client chips */}
+            {clientFilter.map(c => (
+              <span key={c} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-lg">
+                <Filter size={10} />
+                {c}
+                <button onClick={() => setClientFilter(prev => prev.filter(v => v !== c))} className="ml-0.5 hover:text-blue-900">
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+            {/* Multi-select owner chips */}
+            {ownerFilter.map(o => (
+              <span key={o} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 text-xs rounded-lg">
+                <Filter size={10} />
+                {o}
+                <button onClick={() => setOwnerFilter(prev => prev.filter(v => v !== o))} className="ml-0.5 hover:text-purple-900">
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+            {/* Date filter chips */}
+            {(dateFilters.close_date_preset || dateFilters.close_date_from || dateFilters.close_date_to) && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-lg">
+                <Filter size={10} />
+                Close: {dateFilterLabel(dateFilters.close_date_preset, dateFilters.close_date_from, dateFilters.close_date_to)}
+                <button onClick={() => setDateFilters(p => ({ ...p, close_date_preset: '', close_date_from: '', close_date_to: '' }))} className="ml-0.5 hover:text-amber-900"><X size={10} /></button>
+              </span>
+            )}
+            {(dateFilters.create_date_preset || dateFilters.create_date_from || dateFilters.create_date_to) && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-lg">
+                <Filter size={10} />
+                Created: {dateFilterLabel(dateFilters.create_date_preset, dateFilters.create_date_from, dateFilters.create_date_to)}
+                <button onClick={() => setDateFilters(p => ({ ...p, create_date_preset: '', create_date_from: '', create_date_to: '' }))} className="ml-0.5 hover:text-amber-900"><X size={10} /></button>
+              </span>
+            )}
+            {(dateFilters.closed_date_preset || dateFilters.closed_date_from || dateFilters.closed_date_to) && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-lg">
+                <Filter size={10} />
+                Closed: {dateFilterLabel(dateFilters.closed_date_preset, dateFilters.closed_date_from, dateFilters.closed_date_to)}
+                <button onClick={() => setDateFilters(p => ({ ...p, closed_date_preset: '', closed_date_from: '', closed_date_to: '' }))} className="ml-0.5 hover:text-amber-900"><X size={10} /></button>
+              </span>
+            )}
           </div>
         )}
 
-        {(search || hasColFilters) && (
-          <button onClick={() => { setSearch(''); setColFilters({ status: '', stage: '', client_name: '' }) }}
+        {(search || hasAnyFilter) && (
+          <button onClick={clearAllFilters}
             className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
             <X size={13} /> Clear all
           </button>
@@ -504,7 +773,7 @@ export default function Opportunities() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
         {error && <div className="p-6 text-center text-sm text-red-600">{error}</div>}
 
         {!error && loading && (
@@ -533,16 +802,41 @@ export default function Opportunities() {
               <tr className="border-b border-gray-100 bg-gray-50/50">
                 <Th col="title"          label="Opportunity" />
                 <Th col="client_name"    label="Client"
-                    filterCol="client_name" filterOptions={clientOptions} />
+                    filterType="multi" filterOptions={clientOptions}
+                    filterValue={clientFilter} onFilterChange={setClientFilter} />
+                <Th col="assigned_resource_name" label="Owner"
+                    filterType="multi" filterOptions={ownerOptions}
+                    filterValue={ownerFilter} onFilterChange={setOwnerFilter} />
                 <Th col="status"         label="Status"
-                    filterCol="status" filterOptions={AT_STATUS_OPTIONS} />
+                    filterType="single" filterCol="status" filterOptions={AT_STATUS_OPTIONS} />
                 <Th col="stage"          label="Stage"
-                    filterCol="stage" filterOptions={stageOptions} />
+                    filterType="single" filterCol="stage" filterOptions={stageOptions} />
+                <Th col="category"       label="Category"
+                    filterType="single" filterCol="category" filterOptions={categoryOptions} />
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Numbers</th>
                 <Th col="quote_count"    label="Quotes"  className="text-center" />
                 <Th col="order_count"    label="Orders"  className="text-center" />
                 <Th col="amount"         label="Amount"  className="text-right" alignFilter="right" />
-                <Th col="expected_close" label="Close Date" />
+                <Th col="created_date"   label="Created"
+                    filterType="date"
+                    datePreset={dateFilters.create_date_preset}
+                    dateFrom={dateFilters.create_date_from}
+                    dateTo={dateFilters.create_date_to}
+                    onDateChange={({ preset, from, to }) => setDateFilters(p => ({ ...p, create_date_preset: preset, create_date_from: from, create_date_to: to }))} />
+                <Th col="expected_close" label="Close Date"
+                    filterType="date"
+                    datePreset={dateFilters.close_date_preset}
+                    dateFrom={dateFilters.close_date_from}
+                    dateTo={dateFilters.close_date_to}
+                    onDateChange={({ preset, from, to }) => setDateFilters(p => ({ ...p, close_date_preset: preset, close_date_from: from, close_date_to: to }))} />
+                {statusFilter !== 'open' && (
+                  <Th col="closed_date" label="Closed"
+                      filterType="date"
+                      datePreset={dateFilters.closed_date_preset}
+                      dateFrom={dateFilters.closed_date_from}
+                      dateTo={dateFilters.closed_date_to}
+                      onDateChange={({ preset, from, to }) => setDateFilters(p => ({ ...p, closed_date_preset: preset, closed_date_from: from, closed_date_to: to }))} />
+                )}
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -557,6 +851,9 @@ export default function Opportunities() {
                     <span className="text-sm text-gray-700">{opp.client_name || '—'}</span>
                   </td>
                   <td className="px-4 py-3">
+                    <span className="text-xs text-gray-600">{opp.assigned_resource_name || '—'}</span>
+                  </td>
+                  <td className="px-4 py-3">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusPillClass(opp.status)}`}>
                       {opp.status || '—'}
                     </span>
@@ -565,6 +862,9 @@ export default function Opportunities() {
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${stagePillClass(opp.stage)}`}>
                       {opp.stage || '—'}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-gray-600">{opp.category || '—'}</span>
                   </td>
                   <td className="px-4 py-3 max-w-[160px]">
                     {opp.po_numbers?.length > 0 ? (
@@ -587,8 +887,16 @@ export default function Opportunities() {
                     <span className="text-sm text-gray-900">{opp.amount != null ? fmt(opp.amount) : '—'}</span>
                   </td>
                   <td className="px-4 py-3">
+                    <span className="text-xs text-gray-500">{fmtDate(opp.created_date)}</span>
+                  </td>
+                  <td className="px-4 py-3">
                     <span className="text-xs text-gray-500">{fmtDate(opp.expected_close)}</span>
                   </td>
+                  {statusFilter !== 'open' && (
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-gray-500">{fmtDate(opp.closed_date)}</span>
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <ChevronRight size={15} className="text-gray-300" />
                   </td>

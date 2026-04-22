@@ -126,7 +126,8 @@ router.get('/sync/status', requireAuth, async (req, res) => {
         (SELECT count(*) FROM quote_items qi JOIN quotes q ON q.id = qi.quote_id JOIN opportunities o ON o.id = q.opportunity_id WHERE o.tenant_id = $1) AS item_count,
         (SELECT MAX(last_synced_at) FROM opportunities WHERE tenant_id = $1) AS last_opp_sync,
         (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND array_length(po_numbers, 1) > 0) AS opps_with_po,
-        (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND status IN ('Closed','Implemented') AND array_length(po_numbers, 1) > 0) AS closed_won_with_po
+        (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND status IN ('Closed','Implemented') AND array_length(po_numbers, 1) > 0) AS closed_won_with_po,
+        (SELECT DISTINCT array_agg(DISTINCT assigned_resource_name ORDER BY assigned_resource_name) FILTER (WHERE assigned_resource_name IS NOT NULL) FROM opportunities WHERE tenant_id = $1) AS resource_names
     `, [req.tenant.id])
 
     // Distinct statuses and stages for the admin panel pickers

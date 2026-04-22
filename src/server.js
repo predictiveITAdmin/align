@@ -281,6 +281,16 @@ async function runStartupMigrations() {
     `)
     console.log('[startup] quote_items.long_description column ok')
 
+    // Add assigned_resource_name to opportunities (resolved from AT Resources picklist)
+    await db.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='opportunities' AND column_name='assigned_resource_name') THEN
+          ALTER TABLE opportunities ADD COLUMN assigned_resource_name TEXT;
+        END IF;
+      END $$
+    `)
+    console.log('[startup] opportunities.assigned_resource_name column ok')
+
     const h = await db.query(`UPDATE assets SET hostname = COALESCE(datto_rmm_data->>'hostname', autotask_data->>'rmmDeviceAuditHostname') WHERE hostname IS NULL`)
     const u = await db.query(`UPDATE assets SET last_user = CASE WHEN datto_rmm_data->>'lastLoggedInUser' LIKE '%\\%' THEN SPLIT_PART(datto_rmm_data->>'lastLoggedInUser', '\\', 2) ELSE datto_rmm_data->>'lastLoggedInUser' END WHERE last_user IS NULL AND datto_rmm_data->>'lastLoggedInUser' IS NOT NULL AND datto_rmm_data->>'lastLoggedInUser' != ''`)
     const r = await db.query(`UPDATE assets SET ram_bytes = NULLIF(autotask_data->>'rmmDeviceAuditMemoryBytes','')::BIGINT WHERE ram_bytes IS NULL AND autotask_data->>'rmmDeviceAuditMemoryBytes' NOT IN ('0','') AND autotask_data->>'rmmDeviceAuditMemoryBytes' IS NOT NULL`)

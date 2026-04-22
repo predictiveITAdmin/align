@@ -117,6 +117,45 @@ Only opportunities with `category != 'Monthly Recurring Revenue'` participate in
 
 ---
 
+## Client Management: Parent / Child (Locations)
+
+### Autotask Company Hierarchy
+
+In Autotask, parent companies can have child "location" companies linked via the `parentCompanyID` field on the Company entity. These represent branch offices, subsidiaries, or physical sites of a single organizational client.
+
+### Database Plan
+
+The `clients` table needs a self-referential foreign key to represent this hierarchy:
+
+```sql
+ALTER TABLE clients ADD COLUMN parent_client_id UUID REFERENCES clients(id);
+```
+
+- `parent_client_id IS NULL` — top-level company (the "parent")
+- `parent_client_id IS NOT NULL` — a location/child of the referenced parent
+
+### Sync: companiesSync
+
+The `companiesSync` service should set `parent_client_id` during upsert:
+
+1. For each company synced from AT, check if `parentCompanyID` is set
+2. If set, look up the local client UUID by `autotask_company_id = parentCompanyID`
+3. Set `parent_client_id` to that UUID (or NULL if parent not yet synced — a second pass resolves these)
+
+### UI: ClientDetail — Locations Tab
+
+When viewing a top-level client (`parent_client_id IS NULL`), the `ClientDetail` page should show a **Locations** tab alongside existing tabs (Overview, Assets, Tickets, etc.).
+
+The Locations tab:
+- Lists all clients where `parent_client_id = <current client id>`
+- Shows name, city/state (from AT data), asset count, active contract indicator
+- Each location is a link to its own `ClientDetail` page
+- If the client has no locations (no children), the tab is hidden
+
+When viewing a child/location client, display a breadcrumb or "Part of: [Parent Name]" link near the header.
+
+---
+
 ## Why This Exists
 
 Key differentiator for predictiveIT's MSP practice — replaces ScalePad LMX + MyITProcess + BrightGauge with a unified platform.

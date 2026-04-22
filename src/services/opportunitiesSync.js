@@ -214,6 +214,19 @@ async function syncOpportunities(tenantId, forceSince = null) {
     since = sinceRow.rows[0]?.t
   }
 
+  // Fetch all active resources once for name lookup
+  let resourceMap = {}
+  try {
+    const search = JSON.stringify({ filter: [{ field: 'isActive', op: 'eq', value: true }] })
+    const resRes = await client.get(`/Resources?search=${encodeURIComponent(search)}`)
+    for (const r of (resRes.data?.items || [])) {
+      resourceMap[r.id] = [r.firstName, r.lastName].filter(Boolean).join(' ')
+    }
+    console.log(`[opportunitiesSync] loaded ${Object.keys(resourceMap).length} resources`)
+  } catch (err) {
+    console.warn('[opportunitiesSync] could not fetch Resources:', err.message)
+  }
+
   console.log('[opportunitiesSync] pulling Opportunities, since:', since || '(full)', '| settings:', cfg)
   let count = 0, skipped = 0, errors = 0
 
@@ -294,14 +307,16 @@ async function syncOpportunities(tenantId, forceSince = null) {
       if (descUpper.includes('QUOTEWERKS')) source = 'quotewerks'
       else if (descUpper.includes('KQM') || descUpper.includes('KASEYA QUOTE')) source = 'kqm'
 
+      const resourceName = opp.ownerResourceID ? (resourceMap[opp.ownerResourceID] || null) : null
+
       await db.query(`
         INSERT INTO opportunities (
           tenant_id, client_id, autotask_opportunity_id,
           title, stage, status, category, amount, po_numbers,
           assigned_resource_id, source,
           expected_close, created_date, closed_date,
-          metadata, last_synced_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW())
+          metadata, assigned_resource_name, last_synced_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, NOW())
         ON CONFLICT (autotask_opportunity_id) DO UPDATE SET
           client_id              = EXCLUDED.client_id,
           title                  = EXCLUDED.title,
@@ -311,6 +326,7 @@ async function syncOpportunities(tenantId, forceSince = null) {
           amount                 = EXCLUDED.amount,
           po_numbers             = EXCLUDED.po_numbers,
           assigned_resource_id   = EXCLUDED.assigned_resource_id,
+          assigned_resource_name = EXCLUDED.assigned_resource_name,
           source                 = COALESCE(opportunities.source, EXCLUDED.source),
           expected_close         = EXCLUDED.expected_close,
           closed_date            = EXCLUDED.closed_date,
@@ -333,6 +349,7 @@ async function syncOpportunities(tenantId, forceSince = null) {
         opp.createDate || null,
         opp.closedDate || null,
         opp,
+        resourceName,
       ])
       count++
     } catch (err) {
