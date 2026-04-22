@@ -6,23 +6,37 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 
 ## 🎯 Current Focus (2026-04-22)
 
-**Active:** Order Management module — see [`docs/order-management-spec.md`](./docs/order-management-spec.md).
-Phases A–C.1 shipped. Next: wire up real distributor API credentials (Ingram Micro, TD Synnex) and Phase E (QBO integration).
+**Active:** Order Management + Opportunities module polish. See [`docs/order-management-spec.md`](./docs/order-management-spec.md).
+
+**Distributor status:**
+- TD Synnex eSolutions — ✅ Active (PO-driven SOAP/XML sync running)
+- Ingram Micro Xvantage XI — 🟡 Adapter built, awaiting production credentials
+- Dell Premier — 🔲 Adapter built, awaiting Client ID + Secret from Dell account team
+- Amazon Business — ✅ CSV import active
+- Provantage — ✅ Manual entry active
+
+**Next priorities:**
+1. Obtain Ingram Micro Xvantage production credentials (currently sandbox → HTTP 500)
+2. Obtain Dell Premier OAuth2 credentials from Dell Premier portal
+3. Phase E: QuickBooks Online integration (receipt confirmation → QBO PO update)
+4. Implement Parent/Child client Locations tab (spec in `docs/product-spec.md`)
+5. UI actionability pass — pop-up cards + dashboard widgets (see CHANGELOG 2026-04-22)
+
+**Recently shipped (2026-04-22):**
+- Opportunities sync fixes: pagination 405-retry bug fixed, batch quotes (952 synced in 2 pages vs 2,271 calls), incremental quote items, `forceSince` bypass parameter, `assigned_resource_name` from AT Resources API
+- TD Synnex eSolutions adapter live + sync_mode filter fix in `distributorSync.js`
+- Dell Premier OAuth2 adapter built (`src/services/distributors/dell_premier.js`)
+- Opportunities page: Owner + Category + Created/Closed Date columns, multi-select client + owner filters, date range presets, enhanced 8-field detail slide-over
+- Product spec: Dell Premier section, Parent/Child client Locations tab spec
+- Committed: `e4cd199` (sync fixes), `c9593f3` (sync_mode fix), `7937144` (Opps UI)
 
 **Critical field name fix (2026-04-22):** Autotask Opportunities API returns `companyID` (not `accountID`) for the company link. Fixed in `opportunitiesSync.js` and backfilled 121 records via SQL UPDATE.
-
-**Recently shipped (Phase 4 — standards + assessments):**
-- 1,387 MyITProcess standards imported as drafts (see `scripts/standards_import/`)
-- 8 cross-framework merges executed (Incident response now tagged across HIPAA, ISO, NIST, PCI-DSS simultaneously)
-- Framework Gap assessment type + answer inheritance (answer once → satisfy many frameworks)
-- Response modes: binary / ternary / graded / informational — 4,376 responses sized to control type
-- Per-client review cadence setting, onboarding phase 1/2, recurring reviews
-- Committed: `ddca220` (Phase 4), `b973433` (docs reorg), `1296dfd` (import scripts), `9777f2a` (order mgmt spec)
 
 ## 📦 Parked — resume when ready
 
 - **Approve 1,379 imported standards drafts** in the Standards page UI. Bulk-approve by section is fastest. CMMC / PCI-DSS / ISO sections are safe to bulk-approve (authoritative content), NIST CSF + HIPAA deserve closer review.
 - **Second-pass dedup review complete** — 1 very-likely + 7 probable merges executed; 16 possible (75-79%) still in `/tmp/standards_import/dedup_second_pass.md` if you want a third pass.
+- **Re-sync opportunities** to backfill `assigned_resource_name` for existing 2,271 records (sync now captures owner name; existing rows need a full re-sync pass).
 
 ## 💾 Backups
 

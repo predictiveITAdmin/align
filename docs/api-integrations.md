@@ -24,8 +24,11 @@ Some APIs (Autotask, Datto RMM) are shared with Resolve — creds live in `/opt/
 - **Base:** `https://webservices1.autotask.net/ATServicesRest/V1.0`
 - **Auth:** 3 headers (`ApiIntegrationCode`, `UserName`, `Secret`)
 - **Creds:** `/opt/resolve/.env` (`AUTOTASK_*`)
-- **Key entities:** `ConfigurationItems` (107 fields — THE asset lifecycle entity), `Companies`, `Contacts`, `Tickets`, `Contracts`, `Products`, `Opportunities`
+- **Key entities:** `ConfigurationItems` (107 fields — THE asset lifecycle entity), `Companies`, `Contacts`, `Tickets`, `Contracts`, `Products`, `Opportunities`, `Quotes`, `QuoteItems`
 - **ConfigurationItems has:** serial numbers, warranty dates, manufacturer, model, RMM audit data, costs, 58 config types
+- **Opportunities pagination:** AT returns HTTP 405 on GET for continuation pages — retry as POST to `nextUrl` (not the base query endpoint). This affects all paginated AT entities.
+- **Resources endpoint:** `GET /Resources` — returns all active resources with `id`, `firstName`, `lastName`. Used to build a lookup map for resolving `assignedResourceID` → full name on Opportunities.
+- **Opportunities sync note:** AT `status` field can lag behind actual deal state. Stage number is the authoritative source: stages 7–14 = won/closed, stage 15 = lost, stage 66 = junk (excluded from sync).
 
 ## 4. Datto RMM
 - **Base:** `https://concord-api.centrastage.net`
@@ -61,6 +64,19 @@ Some APIs (Autotask, Datto RMM) are shared with Resolve — creds live in `/opt/
 - **Key data:** per-response CSAT with company name, ticket number (`custom_1`), tech name (`custom_3`), temperature rating (1=Gold / 2=Green / 3=Yellow / 4=Red)
 - **Response format:** XML
 - **Thermometers:** "Autotask Survey - New" (208572), "Reactive Support Survey" (46408), "Employee NPS" (186877)
+
+## 10. Dell Premier (Order Management)
+- **Base:** `https://apigtwb2c.us.dell.com/PROD/v1`
+- **Auth:** OAuth2 Client Credentials
+- **Token URL:** `https://apigtwb2c.us.dell.com/auth/oauth/v2/token`
+- **Key endpoint:** `GET /orders?fromOrderDate={ISO}&toOrderDate={ISO}&page={n}`
+- **Sync strategy:** `date_range` — paginated, incremental since `last_sync_at`
+- **Required credentials:** `client_id`, `client_secret` (from Dell Premier portal)
+- **Optional:** `account_number` (to filter orders by account)
+- **Status:** adapter built (`src/services/distributors/dell_premier.js`), awaiting credentials
+- **To activate:** Settings → Suppliers → Add Supplier → "Dell Premier"; obtain creds from Dell account team
+
+---
 
 ## 9. Strety (EOS) — DECISION: Build Custom Instead
 - Strety has a beta API but limited coverage (Scorecard metrics + People only)

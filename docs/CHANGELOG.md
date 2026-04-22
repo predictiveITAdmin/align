@@ -18,6 +18,87 @@ implements it.
 
 ---
 
+## 2026-04-22 — Opportunities UI: filters, columns, detail card
+
+Major overhaul of the `/opportunities` global page and detail slide-over:
+
+- **New columns:** Owner (resolved to full name from AT Resources API), Category,
+  Created Date, Closed Date (only shown when not filtering to open-only)
+- **Multi-select client filter:** checkbox dropdown — select one or many clients;
+  replaces the old single-value text search
+- **Multi-select owner filter:** same pattern — filter by one or many resource names
+- **Date range filters (all three date fields):** presets (This Week / Last Week /
+  This Month / Last Month / Next Month) + custom from/to date inputs with calendar
+  picker. Applies to: Close Date (projected close), Create Date, Closed Date
+- **Active filter chips:** each active filter shows a removable chip with ×; "Clear
+  all" resets everything
+- **Enhanced OppDetail slide-over:** expanded from 4 to 8 fields — Stage, Amount,
+  Owner, Category, Close Date (projected), Create Date, Closed Date, PO Numbers
+- **`assigned_resource_name TEXT` column** added to `opportunities` table via server
+  startup migration (ADD COLUMN IF NOT EXISTS). Populated during sync from
+  AT Resources API lookup.
+
+## 2026-04-22 — Opportunity sync: pagination fix, batch quotes, incremental items
+
+Four significant reliability + performance improvements to `opportunitiesSync.js`:
+
+- **Fix AT pagination 405-retry loop:** When AT returned HTTP 405 on a GET
+  continuation page, the retry was POSTing to the base `/Quotes/query` endpoint
+  (no cursor), always returning page 1 and looping forever. Fix: retry posts to
+  `nextUrl` directly which contains the page cursor. Affected all paginated AT
+  queries; caused incomplete syncs silently.
+- **Batch `syncQuotes`:** Previously made one AT API call per opportunity (2,271+
+  calls, ~30+ min). Rewritten as a single paginated batch query with
+  `opportunityID > 0` + optional `lastActivityDate ≥ since` filter, then matches
+  quotes to opportunities in memory. Result: 2 pages, ~30 sec, 952 quotes.
+- **Incremental `syncQuoteItems`:** Scheduled runs now only re-fetch items for
+  quotes updated in the last 4 hours (`q.last_synced_at > NOW() - '4 hours'`).
+  Full pull (forceSince) fetches items for all quotes. Prevents ~972-call storm
+  on every hourly tick.
+- **`forceSince` parameter:** New parameter on `syncOpportunities`, `syncQuotes`,
+  `syncQuoteItems`, and `syncAll`. When set, bypasses the DB-computed
+  `MAX(last_synced_at)` cursor so a manual full-pull isn't blocked by the
+  scheduler auto-running and resetting the cursor mid-operation.
+- **AT Resources lookup:** Before the main opp loop, fetches `GET /Resources`
+  to build a `{ resourceId → 'First Last' }` map. Stores the resolved name in
+  `opportunities.assigned_resource_name` so the UI can display the owner name
+  without a secondary lookup.
+
+## 2026-04-22 — Dell Premier distributor adapter
+
+New adapter: `src/services/distributors/dell_premier.js`
+
+- **Auth:** OAuth2 Client Credentials — token URL
+  `https://apigtwb2c.us.dell.com/auth/oauth/v2/token`, cached with 5-min
+  safety buffer before expiry
+- **Sync strategy:** `date_range` — `GET /orders?fromOrderDate={since}` paginated
+- **Status normalization:** deliver→delivered, ship→shipped, cancel→cancelled,
+  hold→exception, acknowledg→confirmed
+- **Required fields:** `client_id`, `client_secret` (optional: `account_number`)
+- Registered in `distributors/index.js` under key `dell_premier`
+- Status: pending production credentials from Dell account team / Premier portal
+
+## 2026-04-22 — Distributor sync: fix sync_mode filter
+
+`syncAllSuppliers` queried `sync_mode = 'api'` but suppliers configured via the
+admin UI default to `sync_mode = 'scheduled'`. TD Synnex eSolutions was therefore
+never picked up by the hourly scheduler. Fixed to `sync_mode IN ('api', 'scheduled')`.
+
+## 2026-04-22 — TD Synnex eSolutions adapter active
+
+`tdsynnex_esolutions` adapter now operational:
+
+- SOAP/XML over HTTPS with WS-Security UsernameToken auth
+- PO-driven sync (no list endpoint): queries local opportunities for all
+  PO numbers from Closed/Implemented non-MRR opportunities, calls
+  `getPOStatus(poNo)` per PO, upserts results
+- Stage-based won/lost classification: stages 7–14 = won, 15 = lost, 66 = junk
+  (excluded entirely from sync), overrides AT `status` field for legacy data
+  where reps skipped the Close wizard
+- MRR exclusion: `category NOT ILIKE '%Monthly Recurring Revenue%'` — recurring
+  contracts never have distributor POs
+- First run seeded with 722 PO numbers from closed-won non-MRR opportunities
+
 ## 2026-04-21 — Order Management Phase A backend shipped
 
 Complete backend scaffolding for Order Management module, ready for frontend work:

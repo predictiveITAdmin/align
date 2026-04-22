@@ -48,6 +48,56 @@ All 9 data sources confirmed working. Full API details in [`api-integrations.md`
 
 ---
 
+## Opportunities Module
+
+Global view of all Autotask Opportunities across clients. Synced from Autotask PSA with quotes and quote line items.
+
+### Opportunities Page (`/opportunities`)
+
+**Columns:** Client, Title, Stage (pill), Amount, Owner, Category, Close Date (projected), Created Date, Closed Date (conditional — only shown when not filtering to open-only)
+
+**Filters:**
+- **Status toggle:** Open (Active) / All (includes Closed, Won, Lost)
+- **Stage:** dropdown of known stages
+- **Client:** multi-select checkbox dropdown — select one or many clients
+- **Owner:** multi-select checkbox dropdown — filter by assigned resource name
+- **Category:** single-select column filter
+- **Close Date:** date range with presets (This Week / Last Week / This Month / Last Month / Next Month) + custom from/to
+- **Create Date:** same date range pattern
+- **Closed Date:** same date range pattern (visible when status = All)
+- **Active filter chips:** each active filter shows a removable chip; "Clear all" button resets all
+
+**OppDetail slide-over (8 fields):** Stage, Amount, Owner, Category, Close Date (projected), Create Date, Closed Date, PO Numbers
+
+### Sync Architecture
+
+- **`opportunitiesSync.js`** — pulls Opportunities, Quotes, QuoteItems from AT PSA
+- **AT Resources lookup:** fetches `GET /Resources` before main loop to build `{resourceId → 'First Last'}` map; stored in `opportunities.assigned_resource_name`
+- **AT pagination 405-retry fix:** POST retries go to `nextUrl` (contains cursor), not the base query endpoint
+- **Batch quotes:** single AT call with `opportunityID > 0` + `lastActivityDate ≥ since`, matched to local opps in memory
+- **Incremental quote items:** scheduled runs only re-fetch items for quotes updated in the last 4 hours
+- **`forceSince` parameter:** bypasses DB-computed `MAX(last_synced_at)` cursor for full manual pulls
+- **Stage-based status:** stages 7–14 = won/Closed, 15 = Lost, 66 = Junk (excluded); overrides AT `status` field
+
+### Data Model (key columns)
+
+```
+opportunities
+  id uuid PK
+  tenant_id, client_id FK
+  autotask_opportunity_id bigint UNIQUE
+  title, stage, status, amount
+  category text                      ← AT category (e.g. 'Monthly Recurring Revenue')
+  expected_close date                ← projected close date
+  created_at, closed_at
+  po_numbers text[]                  ← parsed from AT PO field (comma-sep → array)
+  assigned_resource_id bigint
+  assigned_resource_name text        ← resolved full name from AT Resources API
+  metadata jsonb, last_synced_at
+```
+
+---
+
 ## Order Management Module
 
 Tracks distributor orders from TD Synnex, Ingram Micro, Dell Premier, Amazon Business, and Provantage. Links orders to Autotask opportunities via PO numbers, enables full procurement visibility per client.

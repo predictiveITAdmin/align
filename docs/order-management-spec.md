@@ -1,6 +1,6 @@
 # Order Management Module — SPEC
 
-**Status:** Phases A–C.1 shipped (2026-04-22)  •  **Owner:** Jason  •  **Last updated:** 2026-04-22
+**Status:** Phases A–D shipped (adapters built; Ingram + Dell Premier awaiting production credentials)  •  **Owner:** Jason  •  **Last updated:** 2026-04-22
 
 ## Purpose
 
@@ -78,9 +78,10 @@ shipped to clients, needs delivery + serial + warranty tracking.
 
 | Priority | Distributor | API Status | Notes |
 |---|---|---|---|
-| 1 | **TD Synnex** | ✅ Access granted (2026-04-22) | eSolutions XML API — PA/PO/POS enabled for accounts 693316 + 791829. PartnerFirst credentials + special password format required. |
-| 1 | **Ingram Micro** | 🔲 Pending | Xvantage platform (2024+). High volume. |
-| 2 | **Provantage** | ✉️ Email parse only | No public API. Email parse mode (order confirmation + ship emails). |
+| 1 | **TD Synnex** | ✅ Active (2026-04-22) | eSolutions XML/SOAP PO-driven adapter live. Accounts 693316 + 791829. 722 PO numbers seeded on first run. |
+| 1 | **Ingram Micro** | 🟡 Sandbox | Xvantage XI REST adapter built; awaiting production credentials from Ingram. |
+| 1 | **Dell Premier** | 🔲 Pending credentials | OAuth2 REST adapter built (`dell_premier`). Awaiting Client ID + Secret from Dell account team / Premier portal. |
+| 2 | **Provantage** | ✉️ Manual entry | No public API. Manual entry mode active; email parse mode planned (Phase I). |
 | 2 | **Amazon Business** | ✅ CSV import live | SP-API too complex; CSV import built and deployed. |
 | 3 | **D&H, Arrow, ScanSource, others** | 🔲 Future | Roadmap only. |
 | — | Pax8 | — | Software-only, **skip** for this module. |
@@ -115,9 +116,11 @@ opportunities                          ← AT Opportunities
   tenant_id uuid
   client_id uuid FK
   autotask_opportunity_id bigint UNIQUE
-  title, stage, amount, expected_close,
+  title, stage, status, amount, expected_close,
+  category text                        ← AT opportunity category (e.g. 'Monthly Recurring Revenue')
   po_numbers text[]                    ← array; AT's PO field is parsed comma-sep
-  assigned_resource_id,
+  assigned_resource_id bigint,
+  assigned_resource_name text          ← resolved full name from AT Resources API
   source text                          ← 'quotewerks' | 'kqm' | 'manual'
   created_at, closed_at,
   metadata jsonb                       ← full AT payload
@@ -455,15 +458,21 @@ Open backorder count on tab header; deep links to global pages.
   - Quotes: all quotes across client's opportunities
   - Orders: distributor orders for this client
 
-**Phase D — Additional distributors** (~1-2 days each)
+**Phase D — Additional distributors** ✅ SHIPPED (adapters built, credentials pending for some)
 - Amazon Business CSV import ✅ (Settings → Suppliers → Import CSV)
-- **TD Synnex XML adapter** ← next priority (API access granted 2026-04-22)
-  - Parse eSolutions XML docs to find PA/PO/POS endpoint URLs
-  - Build `tdSynnexXmlAdapter.js` using axios + fast-xml-parser
-  - Credentials: PartnerFirst username + password (special format), account numbers 693316 + 791829
-  - Fields: order status, tracking, line items (part# + qty shipped)
-- Ingram Micro XI adapter (needs API credentials / access request)
-- Provantage: email parse mode (see Phase I)
+- **TD Synnex eSolutions adapter** ✅ ACTIVE — SOAP/XML PO-driven sync live (2026-04-22)
+  - PO-driven: queries local opps for closed-won non-MRR PO numbers, calls `getPOStatus()` per PO
+  - Stage-based won/lost override: stages 7–14 won, 15 lost, 66 junk (excluded)
+  - 722 PO numbers from closed-won non-MRR opps on first run
+  - Credentials: PartnerFirst username + password, account numbers 693316 + 791829
+- **Dell Premier adapter** ✅ BUILT — awaiting credentials
+  - OAuth2 Client Credentials, `date_range` sync strategy
+  - `GET /orders?fromOrderDate={since}` paginated REST API
+  - To activate: Settings → Suppliers → Add Supplier → "Dell Premier"; obtain Client ID + Secret from Dell Premier portal
+- **Ingram Micro XI adapter** ✅ BUILT — in sandbox, awaiting production credentials
+  - Xvantage XI REST API, date-range strategy, OAuth2
+  - Currently returns HTTP 500 on sandbox; production credentials pending
+- Provantage: manual entry active; email parse mode planned (Phase I)
 
 **Phase E — QuickBooks Online integration** (~2-3 days)
 - QBO OAuth + client library
@@ -551,7 +560,9 @@ suppliers
                                          'amazon_business_csv' | 'provantage_manual'
   display_name text                    ← "Ingram Micro (Xvantage)"
   is_enabled bool DEFAULT false
-  sync_mode text                       ← 'api' | 'webhook' | 'csv_import' | 'manual'
+  sync_mode text                       ← 'api' | 'scheduled' | 'webhook' | 'csv_import' | 'manual'
+                                         Note: 'api' and 'scheduled' are both treated as
+                                         hourly API sync — 'scheduled' is the UI default
   sync_frequency_minutes int           ← default 60
   customer_number text                 ← distributor's customer/account ID
   credentials jsonb                    ← encrypted per-adapter field map
