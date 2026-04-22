@@ -5,9 +5,10 @@
  * Autotask into Align's tables. Source for Order Management module's
  * PO-matching pipeline.
  *
- * PO field on Autotask Opportunity ships as a single text field that may
- * contain multiple POs separated by commas/semicolons/newlines. We parse
- * it into `opportunities.po_numbers text[]` per ADR-003.
+ * PO field on Autotask Opportunity is a User Defined Field named "Purchase Order Number".
+ * Autotask returns UDFs in opp.userDefinedFields = [{name, value}, ...].
+ * The value may contain multiple POs separated by commas/semicolons/newlines.
+ * We parse it into `opportunities.po_numbers text[]` per ADR-003.
  *
  * Incremental: uses lastActivityDate on each entity so re-runs only pull
  * records changed since the last successful sync.
@@ -83,16 +84,32 @@ async function getPicklistLabels(client, entity, fieldName) {
  * Autotask REST returns {items, pageDetails}. We iterate nextPageUrl until empty.
  * Autotask's query uses POST with a filter body.
  */
-async function* queryAll(client, entity, filter, maxPages = 100) {
+async function* queryAll(client, entity, filter, maxPages = 200) {
   const body = { filter, MaxRecords: 500 }
   let nextUrl = `/${entity}/query`
   let isFirst = true
   let pageCount = 0
 
   while (nextUrl && pageCount < maxPages) {
-    const res = isFirst
-      ? await client.post(nextUrl, body)
-      : await client.get(nextUrl)
+    let res
+    try {
+      res = isFirst
+        ? await client.post(nextUrl, body)
+        : await client.get(nextUrl)
+    } catch (err) {
+      // 405 / 400 on continuation pages: Autotask sometimes requires re-POST for large result sets
+      if (!isFirst && (err.response?.status === 405 || err.response?.status === 400)) {
+        console.warn(`[queryAll] ${entity} page ${pageCount}: GET returned ${err.response.status}, retrying as POST`)
+        try {
+          res = await client.post(`/${entity}/query`, { ...body, filter })
+        } catch (retryErr) {
+          console.error(`[queryAll] ${entity} POST retry failed:`, retryErr.message)
+          break
+        }
+      } else {
+        throw err
+      }
+    }
     isFirst = false
     pageCount++
 
@@ -117,10 +134,39 @@ async function getLastSync(tenantId, entity) {
   return r.rows[0]?.t || null
 }
 
+// All Autotask Opportunity status values (static — picklist rarely changes)
+const AT_STATUS_LABELS = {
+  0: 'Not Ready To Buy',
+  1: 'Active',
+  2: 'Lost',
+  3: 'Closed',
+  4: 'Implemented',
+}
+// Statuses excluded from sync by default.
+// NOTE: 'Closed' (won) and 'Implemented' are intentionally NOT excluded — closed-won
+// opportunities are the only ones that have PO numbers, which the distributor
+// matching pipeline needs. Excluding them would break PO → order linking.
+// Only 'Lost' and 'Not Ready To Buy' are skipped as they will never have POs.
+const DEFAULT_EXCLUDE_STATUSES = ['Not Ready To Buy', 'Lost']
+
+// ─── Load opportunity sync settings for tenant ───────────────────────────────
+async function getSyncSettings(tenantId) {
+  const r = await db.query(
+    `SELECT settings->'opportunity_sync' AS cfg FROM tenant_settings WHERE tenant_id = $1`,
+    [tenantId]
+  )
+  return r.rows[0]?.cfg || {
+    active_clients_only:  true,
+    min_create_date:      null,
+    exclude_statuses:     DEFAULT_EXCLUDE_STATUSES,
+  }
+}
+
 // ─── Sync Opportunities ──────────────────────────────────────────────────────
 async function syncOpportunities(tenantId) {
   const client = buildClient()
   const stageLabels = await getPicklistLabels(client, 'Opportunities', 'stage')
+  const cfg = await getSyncSettings(tenantId)
 
   // Incremental: only pull opportunities changed since last sync (or all if first run)
   const sinceRow = await db.query(
@@ -129,32 +175,57 @@ async function syncOpportunities(tenantId) {
   )
   const since = sinceRow.rows[0]?.t
 
-  // Filter: include active + recently-closed (within 90 days); limit by lastActivity if incremental
+  // Build AT filter
   const filter = [{ field: 'id', op: 'gt', value: 0 }]
   if (since) {
     filter.push({ field: 'lastActivity', op: 'gte', value: since.toISOString() })
   }
+  // Date range filter — only sync opportunities created after min_create_date
+  if (cfg.min_create_date) {
+    filter.push({ field: 'createDate', op: 'gte', value: new Date(cfg.min_create_date).toISOString() })
+  }
 
-  console.log('[opportunitiesSync] pulling Opportunities, since:', since || '(full)')
-  let count = 0
-  let errors = 0
+  console.log('[opportunitiesSync] pulling Opportunities, since:', since || '(full)', '| settings:', cfg)
+  let count = 0, skipped = 0, errors = 0
 
   for await (const opp of queryAll(client, 'Opportunities', filter)) {
     try {
       // Find local client by autotask_company_id
+      // Autotask Opportunities API uses "companyID" (not "accountID")
       const cr = await db.query(
         `SELECT id FROM clients WHERE autotask_company_id = $1 AND tenant_id = $2`,
-        [opp.accountID, tenantId]
+        [opp.companyID, tenantId]
       )
       const clientId = cr.rows[0]?.id || null
 
-      // Parse PO field — Autotask exposes this as opportunity.purchaseOrderNumber
-      // (field name may vary — adjust if Autotask uses a different key)
-      const poRaw = opp.purchaseOrderNumber || opp.poNumber || opp.promisedValue || ''
+      // Skip inactive accounts (not in our active clients list) when setting is on
+      if (cfg.active_clients_only && !clientId) {
+        skipped++
+        continue
+      }
+
+      // Resolve status label from picklist ID
+      const statusLabel = AT_STATUS_LABELS[opp.status] || `Status ${opp.status}`
+      const stageLabel  = stageLabels[opp.stage] || String(opp.stage ?? '')
+
+      // Skip by status — don't add new opps with excluded statuses
+      const excludeStatuses = cfg.exclude_statuses || DEFAULT_EXCLUDE_STATUSES
+      if (excludeStatuses.includes(statusLabel)) {
+        // If already in DB, update status but don't delete
+        const existing = await db.query(
+          `SELECT id FROM opportunities WHERE autotask_opportunity_id = $1`,
+          [opp.id]
+        )
+        if (!existing.rows.length) { skipped++; continue }
+      }
+
+      // Parse PO field — stored as UDF "Purchase Order Number" on the Autotask Opportunity
+      // opp.userDefinedFields = [{ name: "Purchase Order Number", value: "PO-123, PO-456" }, ...]
+      const poUdf  = (opp.userDefinedFields || []).find(u => u.name === 'Purchase Order Number')
+      const poRaw  = poUdf?.value || ''
       const poArray = parsePoField(poRaw)
 
       // Map source to one of our enums if detectable
-      // QuoteWerks sometimes stamps descriptions or external refs; heuristic here
       let source = 'manual'
       const descUpper = (opp.description || '').toUpperCase()
       if (descUpper.includes('QUOTEWERKS')) source = 'quotewerks'
@@ -163,15 +234,16 @@ async function syncOpportunities(tenantId) {
       await db.query(`
         INSERT INTO opportunities (
           tenant_id, client_id, autotask_opportunity_id,
-          title, stage, amount, po_numbers,
+          title, stage, status, amount, po_numbers,
           assigned_resource_id, source,
           expected_close, created_date, closed_date,
           metadata, last_synced_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW())
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
         ON CONFLICT (autotask_opportunity_id) DO UPDATE SET
           client_id              = EXCLUDED.client_id,
           title                  = EXCLUDED.title,
           stage                  = EXCLUDED.stage,
+          status                 = EXCLUDED.status,
           amount                 = EXCLUDED.amount,
           po_numbers             = EXCLUDED.po_numbers,
           assigned_resource_id   = EXCLUDED.assigned_resource_id,
@@ -186,7 +258,8 @@ async function syncOpportunities(tenantId) {
         clientId,
         opp.id,
         opp.title || `Opportunity ${opp.id}`,
-        stageLabels[opp.stage] || String(opp.stage ?? ''),
+        stageLabel,
+        statusLabel,
         opp.amount ?? opp.oneTimeRevenue ?? null,
         poArray,
         opp.ownerResourceID || null,
@@ -203,8 +276,8 @@ async function syncOpportunities(tenantId) {
     }
   }
 
-  console.log(`[opportunitiesSync] synced ${count} opportunities (${errors} errors)`)
-  return { count, errors }
+  console.log(`[opportunitiesSync] synced ${count} opportunities (${skipped} skipped, ${errors} errors)`)
+  return { count, skipped, errors }
 }
 
 // ─── Sync Quotes for opportunities we have locally ───────────────────────────
@@ -354,11 +427,14 @@ async function appendPoToAutotask(opportunityLocalId, newPo) {
   const updated = [...(current || []), newPo]
 
   // Update Autotask first (so local stays consistent if AT write fails)
+  // PO is a UDF on Opportunity — patch via userDefinedFields array
   const client = buildClient()
   try {
     await client.patch(`/Opportunities/${atId}`, {
       id: atId,
-      purchaseOrderNumber: serializePoField(updated),
+      userDefinedFields: [
+        { name: 'Purchase Order Number', value: serializePoField(updated) },
+      ],
     })
   } catch (err) {
     console.error(`[opportunitiesSync] AT PO writeback failed for opp ${atId}:`, err.response?.data || err.message)

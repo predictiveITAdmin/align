@@ -4,10 +4,12 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 
 ---
 
-## 🎯 Current Focus (2026-04-21)
+## 🎯 Current Focus (2026-04-22)
 
 **Active:** Order Management module — see [`docs/order-management-spec.md`](./docs/order-management-spec.md).
-Requirements locked, distributor API research is the next step (Ingram Micro, TD Synnex, Provantage, Amazon Business — hardware only, not software).
+Phases A–C.1 shipped. Next: wire up real distributor API credentials (Ingram Micro, TD Synnex) and Phase E (QBO integration).
+
+**Critical field name fix (2026-04-22):** Autotask Opportunities API returns `companyID` (not `accountID`) for the company link. Fixed in `opportunitiesSync.js` and backfilled 121 records via SQL UPDATE.
 
 **Recently shipped (Phase 4 — standards + assessments):**
 - 1,387 MyITProcess standards imported as drafts (see `scripts/standards_import/`)

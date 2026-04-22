@@ -4514,11 +4514,24 @@ const PROC_STATUS_STYLES = {
   cancelled: 'bg-red-50 text-red-700', returned: 'bg-purple-50 text-purple-700',
   exception: 'bg-gray-100 text-gray-600',
 }
-const STAGE_PILL_STYLES = {
-  Prospect: 'bg-gray-100 text-gray-600', Qualified: 'bg-blue-50 text-blue-700',
-  Quoting: 'bg-indigo-50 text-indigo-700', 'Closed Won': 'bg-green-50 text-green-700',
-  'Closed Lost': 'bg-red-50 text-red-600',
+function stagePillClass(stage) {
+  if (!stage) return 'bg-gray-100 text-gray-500'
+  const s = stage.toLowerCase()
+  if (s.includes('closed') && (s.includes('won') || s.includes('satisfied') || s.includes('payment')))
+    return 'bg-green-50 text-green-700'
+  if (s.includes('closed') || s.includes('lost') || s.includes('no longer'))
+    return 'bg-red-50 text-red-600'
+  if (s.includes('qual') || s.includes('prospect'))
+    return 'bg-blue-50 text-blue-700'
+  if (s.includes('quote') || s.includes('proposal'))
+    return 'bg-indigo-50 text-indigo-700'
+  if (s.includes('waiting') || s.includes('po') || s.includes('contract'))
+    return 'bg-yellow-50 text-yellow-700'
+  return 'bg-gray-100 text-gray-600'
 }
+// "Active" is the only open status in Autotask
+const OPEN_OPP_STATUS = 'Active'
+function isOppOpen(opp) { return opp.status === OPEN_OPP_STATUS }
 const DIST_LABELS = { ingram_xi: 'Ingram', tdsynnex_ecx: 'TD Synnex', amazon_business_csv: 'Amazon', provantage_manual: 'Provantage' }
 function procFmt(v) { return v == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(v) }
 function procDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' }
@@ -4536,8 +4549,9 @@ function ProcEmptyState({ icon: Icon, title, sub, linkTo, linkLabel }) {
 
 // ─── Tab: Procurement / Opportunities ────────────────────────────────────────
 function ClientOpportunitiesTab({ clientId }) {
-  const [opps, setOpps] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [opps, setOpps]           = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [showClosed, setShowClosed] = useState(false)
 
   useEffect(() => {
     api.get(`/opportunities?client_id=${clientId}`)
@@ -4549,70 +4563,115 @@ function ClientOpportunitiesTab({ clientId }) {
   if (loading) return <div className="text-center py-16 text-gray-400"><Loader2 size={20} className="animate-spin mx-auto" /></div>
   if (!opps.length) return (
     <ProcEmptyState icon={Target} title="No opportunities yet"
-      sub="Opportunities sync from Autotask hourly once configured"
+      sub="Opportunities sync from Autotask for active clients"
       linkTo="/opportunities" linkLabel="View all opportunities →" />
   )
+
+  const openOpps = opps.filter(o => isOppOpen(o))
+  const wonOpps  = opps.filter(o => o.status === 'Closed' || o.status === 'Implemented')
+  const lostOpps = opps.filter(o => o.status === 'Lost' || o.status === 'Not Ready To Buy')
+  const visible  = showClosed ? opps : openOpps
+
+  // Status pill for client opportunities tab
+  function statusBadge(status) {
+    switch (status) {
+      case 'Active':           return <span className="px-1.5 py-0.5 rounded text-xs bg-green-50 text-green-700">Active</span>
+      case 'Closed':           return <span className="px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700">Won</span>
+      case 'Implemented':      return <span className="px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700">Implemented</span>
+      case 'Lost':             return <span className="px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-600">Lost</span>
+      case 'Not Ready To Buy': return <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-50 text-yellow-700">Not Ready</span>
+      default:                 return <span className="px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-500">{status || '—'}</span>
+    }
+  }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold text-gray-900">Opportunities ({opps.length})</h2>
-        <a href={`/opportunities`} className="text-xs text-primary-600 hover:text-primary-800 flex items-center gap-1">
+        <div className="flex items-center gap-3">
+          <h2 className="text-base font-semibold text-gray-900">Opportunities</h2>
+          {/* Summary badges */}
+          <span className="text-xs text-gray-500">
+            <span className="text-green-700 font-medium">{openOpps.length} open</span>
+            {wonOpps.length > 0 && <> · <span className="text-blue-700 font-medium">{wonOpps.length} won</span></>}
+            {lostOpps.length > 0 && <> · <span className="text-gray-400">{lostOpps.length} lost</span></>}
+          </span>
+          <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden text-xs">
+            <button onClick={() => setShowClosed(false)}
+              className={`px-2.5 py-1 transition-colors ${!showClosed ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+              Active
+            </button>
+            <button onClick={() => setShowClosed(true)}
+              className={`px-2.5 py-1 transition-colors ${showClosed ? 'bg-gray-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+              All
+            </button>
+          </div>
+        </div>
+        <a href="/opportunities" className="text-xs text-primary-600 hover:text-primary-800 flex items-center gap-1">
           View all <ChevronRight size={12} />
         </a>
       </div>
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-100 bg-gray-50/50">
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Opportunity</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stage</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Numbers</th>
-              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quotes</th>
-              <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Orders</th>
-              <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Amount</th>
-              <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Close Date</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {opps.map(opp => (
-              <tr key={opp.id} className="hover:bg-gray-50/50 transition-colors">
-                <td className="px-4 py-3 max-w-[240px]">
-                  <p className="text-sm font-medium text-gray-900 truncate">{opp.title}</p>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STAGE_PILL_STYLES[opp.stage] || 'bg-gray-100 text-gray-600'}`}>
-                    {opp.stage || '—'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 max-w-[160px]">
-                  {opp.po_numbers?.length > 0 ? (
-                    <p className="font-mono text-xs text-gray-700 truncate">
-                      {opp.po_numbers.slice(0, 2).join(', ')}{opp.po_numbers.length > 2 ? ` +${opp.po_numbers.length - 2}` : ''}
-                    </p>
-                  ) : <span className="text-xs text-gray-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span className={`text-xs font-medium ${parseInt(opp.quote_count) > 0 ? 'text-blue-600' : 'text-gray-300'}`}>
-                    {opp.quote_count || 0}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span className={`text-xs font-medium ${parseInt(opp.order_count) > 0 ? 'text-green-600' : 'text-gray-300'}`}>
-                    {opp.order_count || 0}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <span className="text-sm text-gray-900">{opp.amount != null ? procFmt(opp.amount) : '—'}</span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs text-gray-500">{procDate(opp.expected_close)}</span>
-                </td>
+      {visible.length === 0 ? (
+        <ProcEmptyState icon={Target} title="No open opportunities"
+          sub={(wonOpps.length + lostOpps.length) > 0 ? `${wonOpps.length + lostOpps.length} closed/lost — click "All" to see them` : ''}
+        />
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50/50">
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Opportunity</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stage</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Numbers</th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quotes</th>
+                <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Orders</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Amount</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Close Date</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {visible.map(opp => (
+                <tr key={opp.id} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-4 py-3 max-w-[220px]">
+                    <p className="text-sm font-medium text-gray-900 truncate">{opp.title}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    {statusBadge(opp.status)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${stagePillClass(opp.stage)}`}>
+                      {opp.stage || '—'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 max-w-[160px]">
+                    {opp.po_numbers?.length > 0 ? (
+                      <p className="font-mono text-xs text-gray-700 truncate">
+                        {opp.po_numbers.slice(0, 2).join(', ')}{opp.po_numbers.length > 2 ? ` +${opp.po_numbers.length - 2}` : ''}
+                      </p>
+                    ) : <span className="text-xs text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`text-xs font-medium ${parseInt(opp.quote_count) > 0 ? 'text-blue-600' : 'text-gray-300'}`}>
+                      {opp.quote_count || 0}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`text-xs font-medium ${parseInt(opp.order_count) > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+                      {opp.order_count || 0}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="text-sm text-gray-900">{opp.amount != null ? procFmt(opp.amount) : '—'}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-gray-500">{procDate(opp.expected_close)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -4669,7 +4728,7 @@ function ClientQuotesTab({ clientId }) {
                 <td className="px-4 py-3 max-w-[180px]">
                   <p className="text-xs text-gray-700 truncate">{q.opportunity_title || '—'}</p>
                   {q.opportunity_stage && (
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${STAGE_PILL_STYLES[q.opportunity_stage] || 'bg-gray-100 text-gray-600'}`}>
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${stagePillClass(q.opportunity_stage)}`}>
                       {q.opportunity_stage}
                     </span>
                   )}

@@ -22,10 +22,10 @@ const globalNavItems = [
     ],
   },
   {
-    icon: ShoppingCart, label: 'Orders', key: 'orders',
+    icon: ShoppingCart, label: 'Procurement', key: 'orders',
     children: [
-      { to: '/orders',        icon: ShoppingCart, label: 'Orders' },
-      { to: '/opportunities', icon: Target,        label: 'Opportunities' },
+      { to: '/opportunities', icon: Target,       label: 'Opportunities' },
+      { to: '/orders',        icon: Package,      label: 'Orders' },
     ],
   },
   { to: '/standards',   icon: BookOpen,  label: 'Standards' },

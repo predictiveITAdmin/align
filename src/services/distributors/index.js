@@ -35,16 +35,18 @@
  */
 
 const { ORDER_STATUS } = require('./constants')
-const ingramXi = require('./ingram_xi')
-const tdsynnexEcx = require('./tdsynnex_ecx')
-const amazonBusinessCsv = require('./amazon_business_csv')
-const provantageManual = require('./provantage_manual')
+const ingramXi           = require('./ingram_xi')
+const tdsynnexEcx        = require('./tdsynnex_ecx')
+const tdsynnexEsolutions = require('./tdsynnex_esolutions')
+const amazonBusinessCsv  = require('./amazon_business_csv')
+const provantageManual   = require('./provantage_manual')
 
 const adapters = {
-  ingram_xi: ingramXi,
-  tdsynnex_ecx: tdsynnexEcx,
-  amazon_business_csv: amazonBusinessCsv,
-  provantage_manual: provantageManual,
+  ingram_xi:            ingramXi,
+  tdsynnex_ecx:         tdsynnexEcx,        // legacy stub — superseded by esolutions
+  tdsynnex_esolutions:  tdsynnexEsolutions, // active — eSolutions XML/SOAP API
+  amazon_business_csv:  amazonBusinessCsv,
+  provantage_manual:    provantageManual,
 }
 
 function getAdapter(key) {

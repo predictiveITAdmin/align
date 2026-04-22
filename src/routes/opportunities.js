@@ -9,7 +9,7 @@ const opportunitiesSync = require('../services/opportunitiesSync')
 
 // ─── GET /api/opportunities — list with filters ──────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
-  const { client_id, stage, search } = req.query
+  const { client_id, stage, status, search, include_unlinked } = req.query
   try {
     let q = `
       SELECT o.*, c.name AS client_name,
@@ -20,11 +20,18 @@ router.get('/', requireAuth, async (req, res) => {
       WHERE o.tenant_id = $1`
     const params = [req.tenant.id]
 
+    // By default, only show opportunities linked to a client (exclude orphaned inactive-account opps)
+    if (!include_unlinked) {
+      q += ` AND o.client_id IS NOT NULL`
+    }
+
     if (client_id) { params.push(client_id); q += ` AND o.client_id = $${params.length}` }
-    if (stage) { params.push(stage); q += ` AND o.stage = $${params.length}` }
+    if (stage)     { params.push(stage);     q += ` AND o.stage = $${params.length}` }
+    if (status)    { params.push(status);    q += ` AND o.status = $${params.length}` }
     if (search) {
       params.push(`%${search}%`)
       q += ` AND (o.title ILIKE $${params.length}
+                  OR c.name ILIKE $${params.length}
                   OR EXISTS (SELECT 1 FROM unnest(o.po_numbers) p WHERE p ILIKE $${params.length}))`
     }
     q += ` ORDER BY o.created_date DESC NULLS LAST LIMIT 500`
@@ -37,8 +44,9 @@ router.get('/', requireAuth, async (req, res) => {
   }
 })
 
+// NOTE: All specific routes must be defined BEFORE /:id to avoid param capture.
+
 // ─── GET /api/opportunities/client-quotes — all quotes for a client ──────────
-// Must be defined BEFORE /:id to avoid param capture.
 router.get('/client-quotes', requireAuth, async (req, res) => {
   const { client_id } = req.query
   if (!client_id) return res.status(400).json({ error: 'client_id required' })
@@ -64,7 +72,97 @@ router.get('/client-quotes', requireAuth, async (req, res) => {
   }
 })
 
+// ─── POST /api/opportunities/sync — trigger sync (admin only) ────────────────
+router.post('/sync', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
+  try {
+    // Run async — return quickly, let the sync run in background
+    opportunitiesSync.syncAll(req.tenant.id)
+      .then(result => console.log('[opportunities] sync done', result))
+      .catch(err => console.error('[opportunities] sync failed:', err.message))
+
+    res.json({ status: 'started', message: 'Sync running in background' })
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to start sync' })
+  }
+})
+
+// ─── GET /api/opportunities/sync/status — recent sync stats ─────────────────
+router.get('/sync/status', requireAuth, async (req, res) => {
+  try {
+    const r = await db.query(`
+      SELECT
+        (SELECT count(*) FROM opportunities WHERE tenant_id = $1) AS opp_count,
+        (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND client_id IS NOT NULL) AS opps_with_client,
+        (SELECT count(*) FROM quotes q JOIN opportunities o ON o.id = q.opportunity_id WHERE o.tenant_id = $1) AS quote_count,
+        (SELECT count(*) FROM quote_items qi JOIN quotes q ON q.id = qi.quote_id JOIN opportunities o ON o.id = q.opportunity_id WHERE o.tenant_id = $1) AS item_count,
+        (SELECT MAX(last_synced_at) FROM opportunities WHERE tenant_id = $1) AS last_opp_sync,
+        (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND array_length(po_numbers, 1) > 0) AS opps_with_po,
+        (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND status IN ('Closed','Implemented') AND array_length(po_numbers, 1) > 0) AS closed_won_with_po
+    `, [req.tenant.id])
+
+    // Distinct statuses and stages for the admin panel pickers
+    const [stages, statuses] = await Promise.all([
+      db.query(`SELECT DISTINCT stage FROM opportunities WHERE tenant_id = $1 AND stage IS NOT NULL ORDER BY stage`, [req.tenant.id]),
+      db.query(`SELECT DISTINCT status, count(*) AS cnt FROM opportunities WHERE tenant_id = $1 AND status IS NOT NULL GROUP BY status ORDER BY cnt DESC`, [req.tenant.id]),
+    ])
+    res.json({ data: {
+      ...r.rows[0],
+      stages:   stages.rows.map(s => s.stage),
+      statuses: statuses.rows,
+    }})
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// All valid Autotask opportunity status labels (for admin UI)
+const AT_STATUS_OPTIONS = ['Active', 'Not Ready To Buy', 'Lost', 'Closed', 'Implemented']
+// 'Closed' and 'Implemented' intentionally NOT in defaults — they are closed-won deals
+// and the only opportunities that will have PO numbers for distributor order matching.
+const DEFAULT_EXCLUDE_STATUSES = ['Not Ready To Buy', 'Lost']
+
+// ─── GET /api/opportunities/sync-settings — load sync filter config ──────────
+router.get('/sync-settings', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT settings->'opportunity_sync' AS cfg FROM tenant_settings WHERE tenant_id = $1`,
+      [req.tenant.id]
+    )
+    const defaults = {
+      active_clients_only: true,
+      min_create_date:     null,
+      exclude_statuses:    DEFAULT_EXCLUDE_STATUSES,
+    }
+    res.json({ data: r.rows[0]?.cfg || defaults, status_options: AT_STATUS_OPTIONS })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── PUT /api/opportunities/sync-settings — save sync filter config ───────────
+router.put('/sync-settings', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
+  const { active_clients_only, min_create_date, exclude_statuses } = req.body
+  try {
+    const cfg = {
+      active_clients_only: active_clients_only !== false,
+      min_create_date:     min_create_date || null,
+      exclude_statuses:    Array.isArray(exclude_statuses) ? exclude_statuses : DEFAULT_EXCLUDE_STATUSES,
+    }
+    await db.query(`
+      INSERT INTO tenant_settings (tenant_id, settings)
+      VALUES ($1, jsonb_build_object('opportunity_sync', $2::jsonb))
+      ON CONFLICT (tenant_id) DO UPDATE
+        SET settings = tenant_settings.settings || jsonb_build_object('opportunity_sync', $2::jsonb),
+            updated_at = NOW()
+    `, [req.tenant.id, JSON.stringify(cfg)])
+    res.json({ data: cfg, status_options: AT_STATUS_OPTIONS })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── GET /api/opportunities/:id — detail + quotes + items + orders ───────────
+// MUST BE LAST — generic param route captures anything not matched above
 router.get('/:id', requireAuth, async (req, res) => {
   try {
     const opp = await db.query(
@@ -108,37 +206,6 @@ router.get('/:id', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[opportunities] detail error:', err.message)
     res.status(500).json({ error: 'Failed to fetch opportunity' })
-  }
-})
-
-// ─── POST /api/opportunities/sync — trigger sync (admin only) ────────────────
-router.post('/sync', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
-  try {
-    // Run async — return quickly, let the sync run in background
-    opportunitiesSync.syncAll(req.tenant.id)
-      .then(result => console.log('[opportunities] sync done', result))
-      .catch(err => console.error('[opportunities] sync failed:', err.message))
-
-    res.json({ status: 'started', message: 'Sync running in background' })
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to start sync' })
-  }
-})
-
-// ─── GET /api/opportunities/sync/status — recent sync stats ─────────────────
-router.get('/sync/status', requireAuth, async (req, res) => {
-  try {
-    const r = await db.query(`
-      SELECT
-        (SELECT count(*) FROM opportunities WHERE tenant_id = $1) AS opp_count,
-        (SELECT count(*) FROM quotes q JOIN opportunities o ON o.id = q.opportunity_id WHERE o.tenant_id = $1) AS quote_count,
-        (SELECT count(*) FROM quote_items qi JOIN quotes q ON q.id = qi.quote_id JOIN opportunities o ON o.id = q.opportunity_id WHERE o.tenant_id = $1) AS item_count,
-        (SELECT MAX(last_synced_at) FROM opportunities WHERE tenant_id = $1) AS last_opp_sync,
-        (SELECT count(*) FROM opportunities WHERE tenant_id = $1 AND array_length(po_numbers, 1) > 0) AS opps_with_po
-    `, [req.tenant.id])
-    res.json({ data: r.rows[0] })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
   }
 })
 

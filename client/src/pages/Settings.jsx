@@ -2762,6 +2762,225 @@ function SoftwareCatalogTab() {
   )
 }
 
+// ─── Opportunity Sync Settings Tab ───────────────────────────────────────────
+
+const AT_STATUS_OPTIONS = ['Active', 'Not Ready To Buy', 'Lost', 'Closed', 'Implemented']
+
+function OpportunitySyncTab() {
+  const [cfg, setCfg]           = useState(null)
+  const [syncStats, setSyncStats] = useState(null)
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
+  const [syncing, setSyncing]   = useState(false)
+  const [saved, setSaved]       = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      api.get('/opportunities/sync-settings'),
+      api.get('/opportunities/sync/status'),
+    ]).then(([s, st]) => {
+      setCfg(s.data)
+      setSyncStats(st.data)
+    }).finally(() => setLoading(false))
+  }, [])
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const r = await api.put('/opportunities/sync-settings', cfg)
+      setCfg(r.data)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      alert('Save failed: ' + e.message)
+    } finally { setSaving(false) }
+  }
+
+  async function handleSync() {
+    setSyncing(true)
+    try {
+      await api.post('/opportunities/sync')
+      setTimeout(async () => {
+        const st = await api.get('/opportunities/sync/status')
+        setSyncStats(st.data)
+        setSyncing(false)
+      }, 3000)
+    } catch (e) {
+      setSyncing(false)
+      alert('Sync failed: ' + e.message)
+    }
+  }
+
+  function toggleStatus(statusLabel) {
+    setCfg(prev => {
+      const cur = prev.exclude_statuses || []
+      return {
+        ...prev,
+        exclude_statuses: cur.includes(statusLabel)
+          ? cur.filter(s => s !== statusLabel)
+          : [...cur, statusLabel],
+      }
+    })
+  }
+
+  if (loading) return <div className="text-sm text-gray-500 py-8">Loading…</div>
+
+  const excludeStatuses = cfg?.exclude_statuses || []
+  // Show counts from actual data
+  const statusCounts = {}
+  ;(syncStats?.statuses || []).forEach(s => { statusCounts[s.status] = parseInt(s.cnt) })
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">Opportunity Sync Settings</h2>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Control which Autotask opportunities are imported into Align. Changes apply on the next sync.
+        </p>
+      </div>
+
+      {/* Sync stats */}
+      {syncStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Total synced',       value: syncStats.opp_count },
+            { label: 'Matched to clients', value: syncStats.opps_with_client },
+            { label: 'Quotes',             value: syncStats.quote_count },
+            { label: 'Quote items',        value: syncStats.item_count },
+          ].map(s => (
+            <div key={s.label} className="bg-gray-50 rounded-lg px-4 py-3 text-center">
+              <div className="text-2xl font-bold text-gray-900">{s.value ?? '—'}</div>
+              <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+        {/* Active clients only */}
+        <div className="flex items-start justify-between gap-4 px-5 py-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Active clients only</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Only sync opportunities for companies that exist as active clients in Align.
+              Opportunities for inactive or non-customer accounts are skipped.
+            </p>
+          </div>
+          <button
+            onClick={() => setCfg(prev => ({ ...prev, active_clients_only: !prev.active_clients_only }))}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+              cfg?.active_clients_only ? 'bg-primary-600' : 'bg-gray-300'
+            }`}
+          >
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${
+              cfg?.active_clients_only ? 'translate-x-5' : 'translate-x-0'
+            }`} />
+          </button>
+        </div>
+
+        {/* Min create date */}
+        <div className="flex items-start justify-between gap-4 px-5 py-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Only sync opportunities created after</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Leave blank to include all historical opportunities.
+              Useful to reduce noise from old inactive records.
+            </p>
+          </div>
+          <input
+            type="date"
+            value={cfg?.min_create_date || ''}
+            onChange={e => setCfg(prev => ({ ...prev, min_create_date: e.target.value || null }))}
+            className="mt-0.5 text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
+          />
+        </div>
+
+        {/* Exclude by status */}
+        <div className="px-5 py-4">
+          <p className="text-sm font-medium text-gray-900 mb-1">Exclude opportunities by status</p>
+          <p className="text-xs text-gray-500 mb-4">
+            Check each status that should be <strong>excluded</strong> from the sync.
+            Opportunities with these statuses won't be imported as new records.
+          </p>
+          <div className="space-y-2">
+            {AT_STATUS_OPTIONS.map(statusLabel => {
+              // Closed Won and Implemented must always be synced — they have PO numbers
+              // used by the distributor order matching pipeline
+              const isRequiredForPO = statusLabel === 'Closed' || statusLabel === 'Implemented'
+              const excluded  = !isRequiredForPO && excludeStatuses.includes(statusLabel)
+              const cnt       = statusCounts[statusLabel]
+              const isActive  = statusLabel === 'Active'
+              return (
+                <label key={statusLabel}
+                  className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border transition-colors
+                    ${isRequiredForPO
+                      ? 'border-blue-200 bg-blue-50/40 cursor-not-allowed'
+                      : 'border-gray-200 cursor-pointer hover:bg-gray-50'}`}>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={excluded}
+                      disabled={isRequiredForPO}
+                      onChange={() => !isRequiredForPO && toggleStatus(statusLabel)}
+                      className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-40"
+                    />
+                    <div>
+                      <span className={`text-sm font-medium
+                        ${isActive ? 'text-green-700' : isRequiredForPO ? 'text-blue-700' : excluded ? 'text-red-700' : 'text-gray-700'}`}>
+                        {statusLabel}
+                      </span>
+                      {isActive && <span className="ml-2 text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Open / active</span>}
+                      {isRequiredForPO && <span className="ml-2 text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Required for PO matching</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {cnt !== undefined && (
+                      <span className="text-xs text-gray-400">{cnt} in DB</span>
+                    )}
+                    {isRequiredForPO
+                      ? <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">always synced</span>
+                      : excluded
+                        ? <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-medium">excluded</span>
+                        : <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full font-medium">synced</span>
+                    }
+                  </div>
+                </label>
+              )
+            })}
+          </div>
+          <p className="text-xs text-gray-400 mt-3">
+            <strong>Closed</strong> and <strong>Implemented</strong> are always synced — closed-won deals
+            are the only opportunities that have PO numbers, which are needed to match distributor orders.
+          </p>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save settings'}
+        </button>
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="px-4 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+        >
+          {syncing ? 'Syncing…' : 'Run sync now'}
+        </button>
+        {syncStats?.last_opp_sync && (
+          <span className="text-xs text-gray-400">
+            Last synced: {new Date(syncStats.last_opp_sync).toLocaleString()}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Suppliers Tab (Order Management — distributor API configuration) ─────────
 
 function SuppliersTab() {
@@ -2771,6 +2990,10 @@ function SuppliersTab() {
   const [editing, setEditing] = useState(null)  // { adapter, supplier? }
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
+  const [csvImportOpen, setCsvImportOpen] = useState(false)
+  const [csvImporting, setCsvImporting] = useState(false)
+  const [csvResult, setCsvResult] = useState(null)
+  const csvFileRef = useRef(null)
 
   async function load() {
     setLoading(true)
@@ -2805,6 +3028,22 @@ function SuppliersTab() {
     } catch (err) {
       setTestResult({ ok: false, message: err.message })
     } finally { setTesting(false) }
+  }
+
+  async function handleCsvImport(file) {
+    if (!file) return
+    setCsvImporting(true)
+    setCsvResult(null)
+    try {
+      const text = await file.text()
+      const res = await api.post('/suppliers/import/amazon', { csv_content: text })
+      setCsvResult({ ok: true, ...res })
+    } catch (err) {
+      setCsvResult({ ok: false, error: err.message })
+    } finally {
+      setCsvImporting(false)
+      if (csvFileRef.current) csvFileRef.current.value = ''
+    }
   }
 
   async function handleSave(formValues) {
@@ -2871,14 +3110,47 @@ function SuppliersTab() {
                   <p className="text-xs text-red-600 mt-1 font-mono">{existing.last_test_error}</p>
                 )}
               </div>
-              <button onClick={() => openConfigure(adapter, existing)}
-                className="px-3 py-1.5 text-sm font-medium text-primary-600 border border-primary-200 rounded-lg hover:bg-primary-50 transition-colors whitespace-nowrap">
-                {existing ? 'Configure' : 'Set up'}
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Amazon Business: show Import CSV button */}
+                {adapter.adapter_key === 'amazon_business_csv' && (
+                  <label className="px-3 py-1.5 text-sm font-medium text-emerald-700 border border-emerald-200 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors whitespace-nowrap cursor-pointer">
+                    {csvImporting ? 'Importing…' : 'Import CSV'}
+                    <input
+                      ref={csvFileRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="hidden"
+                      disabled={csvImporting}
+                      onChange={e => { handleCsvImport(e.target.files[0]); e.target.value = '' }}
+                    />
+                  </label>
+                )}
+                <button onClick={() => openConfigure(adapter, existing)}
+                  className="px-3 py-1.5 text-sm font-medium text-primary-600 border border-primary-200 rounded-lg hover:bg-primary-50 transition-colors whitespace-nowrap">
+                  {existing ? 'Configure' : 'Set up'}
+                </button>
+              </div>
             </div>
           )
         })}
       </div>
+
+      {/* CSV import result */}
+      {csvResult && (
+        <div className={`mt-4 p-4 rounded-xl border text-sm ${csvResult.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+          {csvResult.ok ? (
+            <p>
+              ✓ Import complete — <strong>{csvResult.imported}</strong> orders imported,{' '}
+              <strong>{csvResult.matched}</strong> auto-matched,{' '}
+              {csvResult.errors > 0 && <><strong>{csvResult.errors}</strong> errors,{' '}</>}
+              {csvResult.parsed - csvResult.imported > 0 && <>{csvResult.parsed - csvResult.imported} duplicates skipped</>}
+            </p>
+          ) : (
+            <p>✗ Import failed: {csvResult.error}</p>
+          )}
+          <button onClick={() => setCsvResult(null)} className="mt-1 text-xs underline opacity-70">Dismiss</button>
+        </div>
+      )}
 
       {editing && (
         <SupplierConfigDrawer
@@ -3049,6 +3321,7 @@ const TABS = [
   { id: 'warranty-lookup',  label: 'Warranty Lookup' },
   { id: 'integrations',     label: 'Integrations' },
   { id: 'integration-setup', label: 'Integration Setup' },
+  { id: 'opportunity-sync', label: 'Opportunity Sync' },
   { id: 'suppliers',        label: 'Suppliers (Order Mgmt)' },
   { id: 'verticals',        label: 'Verticals' },
   { id: 'lob-apps',         label: 'LOB Applications' },
@@ -3092,6 +3365,7 @@ export default function Settings() {
           {activeTab === 'warranty-lookup'  && <WarrantyLookupTab />}
           {activeTab === 'integrations'      && <IntegrationsTab />}
           {activeTab === 'integration-setup' && <IntegrationSetupTab />}
+          {activeTab === 'opportunity-sync'  && <OpportunitySyncTab />}
           {activeTab === 'suppliers'         && <SuppliersTab />}
           {activeTab === 'verticals'         && <VerticalsTab />}
           {activeTab === 'lob-apps'          && <LobAppsTab />}

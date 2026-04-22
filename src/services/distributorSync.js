@@ -43,8 +43,29 @@ async function syncSupplier(supplier) {
 
   let upserted = 0, matched_count = 0, errors = 0
 
+  // PO-driven adapters (e.g. TD Synnex eSolutions): no list endpoint — need PO numbers
+  // Only closed-won opportunities have POs — open opportunities will never have one yet.
+  // Closed = won deal completed; Implemented = fulfilled. Lost/Not Ready have no POs.
+  let fetchOptions = {}
+  if (adapter.syncStrategy === 'po_driven') {
+    const poRes = await db.query(
+      `SELECT DISTINCT unnest(po_numbers) AS po FROM opportunities
+       WHERE tenant_id = $1
+         AND array_length(po_numbers, 1) > 0
+         AND status IN ('Closed', 'Implemented')`,
+      [tenantId]
+    )
+    const poNumbers = poRes.rows.map(r => r.po).filter(Boolean)
+    console.log(`[distributorSync] ${adapter_key}: PO-driven mode, ${poNumbers.length} PO numbers from closed-won opportunities`)
+    if (!poNumbers.length) {
+      console.log(`[distributorSync] ${adapter_key}: no PO numbers in closed-won opportunities, skipping`)
+      return { ok: true, skipped: true, reason: 'no_po_numbers' }
+    }
+    fetchOptions = { poNumbers }
+  }
+
   try {
-    for await (const normalizedOrder of adapter.fetchOrders(creds, config, since)) {
+    for await (const normalizedOrder of adapter.fetchOrders(creds, config, since, fetchOptions)) {
       try {
         const orderId = await upsertOrder(tenantId, supplierId, adapter_key, normalizedOrder)
         upserted++
@@ -87,6 +108,13 @@ async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
   try {
     await client.query('BEGIN')
 
+    // Normalize fields — eSolutions adapter uses supplier_order_number + total_amount
+    const orderId_ext = normalized.distributor_order_id || normalized.supplier_order_number
+    const total       = normalized.total ?? normalized.total_amount ?? null
+    const shipToName  = normalized.ship_to_name || normalized.ship_to?.name || null
+    const shipToAddr  = normalized.ship_to_address || normalized.ship_to || null
+    const metadata    = normalized.metadata ?? normalized.raw ?? null
+
     const orderRes = await client.query(`
       INSERT INTO distributor_orders (
         tenant_id, supplier_id, distributor, distributor_order_id, po_number,
@@ -109,12 +137,12 @@ async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
       RETURNING id
     `, [
       tenantId, supplierId, adapterKey,
-      normalized.distributor_order_id, normalized.po_number,
-      normalized.order_date, normalized.status, normalized.status_raw,
-      normalized.subtotal, normalized.tax, normalized.shipping, normalized.total,
+      orderId_ext, normalized.po_number,
+      normalized.order_date, normalized.status, normalized.status_raw ?? null,
+      normalized.subtotal ?? null, normalized.tax ?? null, normalized.shipping ?? null, total,
       normalized.currency || 'USD',
-      normalized.ship_to_name, normalized.ship_to_address || null,
-      normalized.metadata || null,
+      shipToName, shipToAddr ? JSON.stringify(shipToAddr) : null,
+      metadata ? JSON.stringify(metadata) : null,
     ])
 
     const orderId = orderRes.rows[0].id

@@ -1,6 +1,6 @@
 # Order Management Module — SPEC
 
-**Status:** Requirements locked, ready to design schema  •  **Owner:** Jason  •  **Last updated:** 2026-04-21
+**Status:** Phases A–C.1 shipped (2026-04-22)  •  **Owner:** Jason  •  **Last updated:** 2026-04-22
 
 ## Purpose
 
@@ -76,19 +76,29 @@ shipped to clients, needs delivery + serial + warranty tracking.
 
 **Product/hardware-focused only:**
 
-| Priority | Distributor | Notes |
-|---|---|---|
-| 1 | **Ingram Micro** | Xvantage platform (2024+). High volume. |
-| 1 | **TD Synnex** | SynnexConnect / ECExpress. High volume. |
-| 2 | **Provantage** | No public API. Email parse mode (order confirmation + ship emails). |
-| 2 | **Amazon Business** | SP-API + Business Order APIs. Auth complex. |
-| 3 | **D&H, Arrow, ScanSource, others** | Future phase, roadmap only. |
-| — | Pax8 | Software-only, **skip** for this module. |
+| Priority | Distributor | API Status | Notes |
+|---|---|---|---|
+| 1 | **TD Synnex** | ✅ Access granted (2026-04-22) | eSolutions XML API — PA/PO/POS enabled for accounts 693316 + 791829. PartnerFirst credentials + special password format required. |
+| 1 | **Ingram Micro** | 🔲 Pending | Xvantage platform (2024+). High volume. |
+| 2 | **Provantage** | ✉️ Email parse only | No public API. Email parse mode (order confirmation + ship emails). |
+| 2 | **Amazon Business** | ✅ CSV import live | SP-API too complex; CSV import built and deployed. |
+| 3 | **D&H, Arrow, ScanSource, others** | 🔲 Future | Roadmap only. |
+| — | Pax8 | — | Software-only, **skip** for this module. |
+
+### TD Synnex eSolutions XML API (account 693316 / 791829)
+
+- **Endpoint:** From attached XML–eSolutions document (URL TBD — check attached doc for PA/PO/POS endpoints)
+- **Auth:** PartnerFirst credentials (username + password). Password must be 12–64 alphanumeric chars with ≥1 special char (e.g. `!`, `@`). Use "Reset password" link at PartnerFirst if current password doesn't meet format.
+- **APIs enabled:** PA (Price/Availability), PO (Purchase Order), POS (Point of Sale / order status)
+- **Format:** XML — SOAP-style POST requests, XML response
+- **Adapter pattern:** `tdSynnexAdapter.js` — implement `fetchOrders(since)` using PO status API, normalize to `distributor_orders` schema
+- **What to pull:** Order status, ship date, tracking numbers, line items (part # + qty shipped)
+- **Credentials storage:** AES-256-GCM via `supplierCrypto.js`, fields: `username`, `password`, `account_number`
 
 ⚠ **Research note:** Most distributors' *marketed* APIs are for software
 subscriptions (O365, etc.). The hardware/physical-product APIs are separate
-and usually require direct partner engagement to gain access. Research phase
-must specifically target hardware ordering endpoints.
+and usually require direct partner engagement to gain access. TD Synnex
+access has now been granted — build the adapter next.
 
 ## Sync cadence
 
@@ -388,13 +398,15 @@ creation.
 - Quote vs actual cost comparison (margin)
 - Actions: map/unmap, mark received, push to QBO, resend client email
 
-## Client detail — Orders tab
+## Client detail — Procurement group (tab)
 
-Filters global view to this client, plus:
+Three sub-tabs under a "Procurement" sidebar group:
 
-- Sub-tabs: All Orders | Opportunities | Unmapped POs (if any)
-- Open backorder count on tab header
-- Deep links from Opportunity → Orders under it
+- **Opportunities** (`?tab=procurement-opps`) — client's open opps, Open/All toggle, stage pills
+- **Quotes** (`?tab=procurement-quotes`) — all quotes across the client's opportunities
+- **Orders** (`?tab=procurement-orders`) — distributor orders for this client, status + match pills
+
+Open backorder count on tab header; deep links to global pages.
 
 ## Reports (Phase E or later)
 
@@ -407,28 +419,51 @@ Filters global view to this client, plus:
 
 ## Build phases (revised with new scope)
 
-**Phase A — Autotask sync foundation** (~2 days)
+**Phase A — Autotask sync foundation** ✅ SHIPPED
 - Opportunities / Quotes / QuoteItems tables + migration
-- Extend autotaskApi.js — pull Opps with po_numbers parsed as array
+- `opportunitiesSync.js` — pulls Opps, Quotes, QuoteItems; parses PO array (ADR-003)
 - Source tracking (quotewerks vs kqm vs manual)
-- Simple list view at /opportunities to confirm data
+- `/opportunities` global page with stage pills, sort, search, Open/All toggle
+- Bug fix (2026-04-22): `opp.accountID` → `opp.companyID` — all 502 records backfilled
+- Inactive account filter: only sync opps for companies in active clients list
 
-**Phase B — First distributor + matcher** (~3 days)
-- distributor_orders + distributor_order_items tables
-- Build one adapter (recommend **Ingram Micro** as primary, then **Synnex**)
-- Matcher service: PO exact → fuzzy → client name → address → unmapped
-- Basic /orders page (list + filters + detail)
+**Phase A.1 — Opportunity Sync Management** ✅ SHIPPED
+- Settings → "Opportunity Sync" admin panel
+- Configure: active clients only toggle, min create date, exclude-by-stage keywords
+- Settings stored in `tenant_settings.settings.opportunity_sync` (JSONB)
+- Stage-exclusion keyword pills with live preview of affected stages
+- Sync stats (opp count, client-linked count, quote count)
+- Run sync now button
 
-**Phase C — PO Mapper UI + Autotask writeback** (~1-2 days)
-- Unmapped queue
-- Manual mapping with suggestions
-- Write PO back to Autotask Opportunity PO field (comma-appending)
-- Event log
+**Phase B — First distributor + matcher** ✅ SHIPPED
+- `distributor_orders` + `distributor_order_items` tables
+- Adapters: Ingram Micro XI, TD Synnex ECX, Amazon Business CSV, Provantage manual
+- `orderMatcher.js`: PO exact → fuzzy normalized → client name similarity
+- `/orders` global page (list + filters + detail slide-over, event timeline)
+- `distributorSync.js` + `schedulerSync.js` integration
+
+**Phase C — PO Mapper UI + Autotask writeback** ✅ SHIPPED
+- Unmapped queue surfaced in `/orders`
+- Manual mapping with auto-loaded suggestions + live search
+- Confidence scoring display
+- Write PO back to Autotask Opportunity PO field on confirm
+
+**Phase C.1 — Navigation + client detail procurement** ✅ SHIPPED
+- Sidebar: global "Procurement" group (Opportunities + Orders)
+- Client detail: "Procurement" group with three sub-tabs
+  - Opportunities: open/all toggle, stage pills, sortable by amount/date
+  - Quotes: all quotes across client's opportunities
+  - Orders: distributor orders for this client
 
 **Phase D — Additional distributors** (~1-2 days each)
-- TD Synnex adapter
-- Provantage adapter (pending API research)
-- Amazon Business adapter (complex auth)
+- Amazon Business CSV import ✅ (Settings → Suppliers → Import CSV)
+- **TD Synnex XML adapter** ← next priority (API access granted 2026-04-22)
+  - Parse eSolutions XML docs to find PA/PO/POS endpoint URLs
+  - Build `tdSynnexXmlAdapter.js` using axios + fast-xml-parser
+  - Credentials: PartnerFirst username + password (special format), account numbers 693316 + 791829
+  - Fields: order status, tracking, line items (part# + qty shipped)
+- Ingram Micro XI adapter (needs API credentials / access request)
+- Provantage: email parse mode (see Phase I)
 
 **Phase E — QuickBooks Online integration** (~2-3 days)
 - QBO OAuth + client library
@@ -445,24 +480,26 @@ Filters global view to this client, plus:
 - Auth for client contacts (magic link)
 - Client dashboard, order list, detail views
 - Receipt confirmation UI (client side)
-- Email notification templates via Resend
+- Email notifications via Resend (outbound only — order status emails to client)
 
 **Phase H — Reports** (~2 days)
 
 **Phase I — Email parser (no-API distributors)** (~2-3 days)
-- Add `email_from_domains` + `inbound_email_addr` to suppliers table
-- Inbound email webhook endpoint: `POST /api/inbound-email/:tenantSlug`
-- Route email to supplier adapter by From: domain lookup
-- `mailparser` + `cheerio` for MIME decode + HTML table extraction
-- Provantage adapter: implement `parseEmail(text, html)`
-- Generic fallback: subject-line PO extraction for any unknown structured email
-- `inbound_email_log` table + admin UI (parse history, unrecognized senders)
-- Sync mode `email_parse` option in supplier config drawer
-- Inbound email setup guide (forwarding rule or direct-to-distributor config)
-- Email provider integration: SendGrid Inbound Parse or Mailgun Routes
-  (one provider, configurable via `INBOUND_EMAIL_PROVIDER` env var)
+See "Email parser mode" section under Supplier API Admin Module.
 
-Total: ~19-25 days for everything, ~12 days for MVP (A-E) with Ingram + Synnex.
+**Preferred approach: M365 shared mailbox**
+- Create a shared mailbox (e.g., `orders@predictiveit.com`) in existing M365 tenant
+- Give distributors this address for order confirmation/shipping emails
+- Align polls the mailbox via Microsoft Graph API (`GET /me/mailFolders/Inbox/messages`)
+- Reuses existing Entra/M365 OAuth infrastructure already in Resolve
+- No new mail infrastructure needed — no DNS changes, no new email provider
+- Adapter pattern: `adapter.parseEmail(text, html)` — each distributor parses its format
+- `inbound_email_log` table for parse history + unrecognized senders alert
+
+**Outbound email (Resend):** Resend can send status emails TO clients but cannot receive
+inbound email. For inbound parsing, use the M365 shared mailbox approach above.
+
+Total: ~19-25 days for everything. Phases A, A.1, B, C, C.1 shipped.
 
 ## Distributor API research — next action
 
