@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
+import OrderDetailSlideOver from '../components/OrderDetailSlideOver'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DISTRIBUTORS = [
@@ -105,7 +106,9 @@ function StatTile({ icon: Icon, label, value, color, onClick, active }) {
   )
 }
 
-// ─── PO Mapper Modal ──────────────────────────────────────────────────────────
+// POMapperModal and OrderDetail are now in OrderDetailSlideOver (shared component).
+// Keep local stubs here so mapOrderId quick-action pattern still works.
+// The slide-over itself is rendered via OrderDetailSlideOver below.
 function POMapperModal({ order, onClose, onMapped }) {
   const [search, setSearch]           = useState('')
   const [suggestions, setSuggestions] = useState([])
@@ -857,7 +860,7 @@ export default function Orders() {
 
       {/* Order detail slide-over */}
       {selectedOrderId && (
-        <OrderDetail
+        <OrderDetailSlideOver
           orderId={selectedOrderId}
           onClose={() => setSelectedOrderId(null)}
           onRefresh={() => { loadOrders(); loadStats() }}

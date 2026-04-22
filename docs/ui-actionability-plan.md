@@ -1,6 +1,6 @@
 # UI Actionability Plan — Pop-up Cards, Widgets & Client Detail Parity
 
-**Status:** Planned  •  **Owner:** Jason  •  **Last updated:** 2026-04-22
+**Status:** In Progress  •  **Owner:** Jason  •  **Last updated:** 2026-04-22
 
 This document captures every place in the Align UI where a widget, stat tile, detail card,
 or entity reference should be interactive but isn't — and exactly what to build to fix it.
@@ -9,9 +9,25 @@ global-page counterparts.
 
 ---
 
+## Completed Fixes (2026-04-22)
+
+- ✅ **ClientDetail Opportunities tab — row click + OppDetail slide-over** — clicking any opp row
+  now opens the full OppDetail slide-over (same as global page). `OppDetailSlideOver` extracted
+  to `client/src/components/OppDetailSlideOver.jsx` and imported in both pages.
+- ✅ **ClientDetail Orders tab — row click + OrderDetail slide-over** — clicking any order row
+  now opens the full OrderDetail slide-over with line items, timeline, and Map/Unmap actions.
+  `OrderDetailSlideOver` (+ POMapperModal) extracted to `client/src/components/OrderDetailSlideOver.jsx`.
+- ✅ **ClientDetail Opportunities tab — search box** — search by opp title, stage, owner, PO.
+- ✅ **Backend search includes quote numbers + quote titles** — searching "11628" now matches
+  opps whose title contains "11628" AND opps that have a linked quote with that number or title.
+  Extended `GET /api/opportunities` search to: `o.title`, `c.name`, `o.po_numbers[]`,
+  `qt.title`, `qt.quote_number::text`.
+
+---
+
 ## Summary of Issues Found
 
-Four categories of gaps:
+Five categories of gaps:
 
 1. **Entity references that aren't links** — client names, opportunity titles, order numbers,
    quote numbers shown in detail cards/tables but not clickable
@@ -283,19 +299,144 @@ Several components should be extracted from Opportunities.jsx and reused:
 | `MultiSelectFilter` | `Opportunities.jsx` (inline component) | ClientDetail tabs, Orders page |
 | `OrderDetail` slide-over | `Orders.jsx` (inline JSX) | ClientDetail Orders tab |
 
-**Recommendation:** Extract these four as standalone components in `client/src/components/`
-before building the client detail tab parity work — it will make those implementations much
-faster and keeps the code DRY.
+**Note:** `OppDetailSlideOver` and `OrderDetailSlideOver` have been extracted (2026-04-22).
+`DateRangeFilter` and `MultiSelectFilter` still need extraction from `Opportunities.jsx`.
+
+---
+
+## Section 6: Global App Search
+
+### 6A. Purpose
+
+A single search input accessible from every page (in the nav bar or as a keyboard shortcut)
+that searches across ALL entities and returns grouped, linked results. Typing a partial string
+like "11628" should surface everything in the system related to that query — not just the entity
+whose title matches, but all related items (the linked quote, order, recommendation, budget line).
+
+### 6B. Search Scope (entities to search)
+
+| Entity | Fields searched | Result shows |
+|--------|----------------|-------------|
+| **Clients** | name, autotask_company_id | Client name, health indicator → navigates to `/clients/{id}` |
+| **Opportunities** | title, po_numbers[], category | Opp title, client name, stage pill, amount → opens OppDetail slide-over |
+| **Quotes** | title, quote_number | Quote title, #number, opp title, client → opens OppDetail for the linked opp |
+| **Orders** | distributor_order_id, po_number, ship_to_name | Order # + distributor + status → opens OrderDetail slide-over |
+| **Recommendations** | title, description | Rec title, client, priority pill → navigates to client recs tab |
+| **Standards** | name, description | Standard name, category → navigates to `/standards` filtered |
+| **Assets** | name, serial_number, model, mfg_part_number | Asset name, client, type → opens AssetModal |
+
+### 6C. "Everything related" behavior
+
+When a query matches an opportunity (e.g., "PITQ11628" found in opp title), the results panel
+should show **all linked entities** as a connected group:
+
+```
+Opportunity   PH - Linda PC (#PITQ11628)        [RVA PH] [Stage 14 - Won]
+  └ Quote     Quote 10194 · $1,958.00            [Active]
+  └ Order     TD Synnex #7219485 · $1,688.00    [delivered]
+```
+
+This is achieved by:
+1. Backend global search endpoint `GET /api/search?q={query}` returns results grouped by entity type
+2. For opportunity hits, the response includes their linked quotes and orders inline
+3. The frontend renders the grouped result with the connected sub-items indented
+
+### 6D. UI Design
+
+**Trigger:** 
+- Search icon in the top navigation bar (always visible)
+- Keyboard shortcut: `⌘K` / `Ctrl+K` (standard command palette pattern)
+
+**Modal overlay:**
+```
+┌─────────────────────────────────────────────────┐
+│ 🔍 Search everything…           ⌘K        ✕   │
+├─────────────────────────────────────────────────┤
+│ Recent searches: Linda PC, Astin Strawberry     │
+├─────────────────────────────────────────────────┤
+│ OPPORTUNITIES (2)                               │
+│  ↳ PH - Linda PC (#PITQ11628)   RVA PH  Won ↗  │
+│     └ Quote 10194 · $1,958       └ TD Synnex ↗ │
+│  ↳ PH - Office Refresh           RVA PH         │
+│                                                 │
+│ CLIENTS (1)                                     │
+│  ↳ Professional Hearing (RVA PH)           ↗   │
+│                                                 │
+│ ORDERS (1)                                      │
+│  ↳ TD Synnex #7219485   PO: PITPO-...   ↗      │
+└─────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+- Results appear after typing ≥2 characters (debounced 200ms)
+- Up/Down arrow keys navigate results; Enter opens the selected item
+- Results grouped by entity type with count headers
+- Clicking an Opportunity → opens OppDetail slide-over (stays on current page)
+- Clicking a Client → navigates to `/clients/{id}`
+- Clicking a Quote → opens the parent OppDetail with that quote pre-expanded
+- Clicking an Order → opens OrderDetail slide-over
+- Keyboard shortcut dismisses on Escape
+- Max 5 results per section to keep the panel compact
+
+### 6E. Backend: `GET /api/search`
+
+New route in `src/routes/search.js`:
+
+```js
+GET /api/search?q={query}
+
+// Response shape:
+{
+  opportunities: [
+    {
+      id, title, status, stage, amount, client_name, client_id,
+      po_numbers,
+      quotes: [{ id, quote_number, title, amount, status }],
+      orders: [{ id, distributor_order_id, distributor, status, total }]
+    }
+  ],
+  clients:  [{ id, name, health_score }],
+  quotes:   [{ id, quote_number, title, amount, opportunity_id, opportunity_title, client_name }],
+  orders:   [{ id, distributor_order_id, distributor, po_number, status, client_name, opportunity_title }],
+  recs:     [{ id, title, priority, client_name, client_id }],
+  assets:   [{ id, name, serial_number, model, client_name, client_id }],
+  total:    42
+}
+```
+
+SQL strategy:
+- Run separate queries per entity type (parallel via `Promise.all`)
+- Each query uses `ILIKE '%q%'` on the relevant text columns
+- Opportunities query additionally pulls joined quotes and orders
+- Limit 5 per entity type in the response
+- Register route in `server.js`
+
+### 6F. Frontend: `GlobalSearch` component
+
+New component: `client/src/components/GlobalSearch.jsx`
+
+- Rendered in the main nav bar (always mounted)
+- `⌘K` / `Ctrl+K` listener attached to `document` via `useEffect`
+- Internal state: `open`, `query`, `results`, `loading`, `selected`
+- Debounced fetch to `/api/search?q={query}` on query change
+- Result rendering: grouped by entity, keyboard-navigable
+- On item select: dispatch navigation or open the appropriate slide-over
+
+**Integration in App.jsx / layout:**
+```jsx
+// In the top-level layout component
+<GlobalSearch />
+// Plus mount OppDetailSlideOver and OrderDetailSlideOver at app level
+// driven by global state (context or zustand) so they can be triggered
+// from GlobalSearch without prop-drilling
+```
 
 ---
 
 ## Notes for Implementation
 
-- The `OppDetail` slide-over already fetches quote + order data when an opp is selected
-  (via `/api/opportunities/{id}/quotes` and linked orders endpoint). Reusing it in
-  ClientDetail requires no API changes — just pass the opp ID.
-- The `OrderDetail` slide-over already handles the POMapperModal. Reusing it in ClientDetail
-  orders tab provides the full mapper UI for free.
-- `DateRangeFilter` and `MultiSelectFilter` are currently defined as function components
-  *inside* `Opportunities.jsx`. Extract them to `client/src/components/DateRangeFilter.jsx`
-  and `client/src/components/MultiSelectFilter.jsx`.
+- `OppDetailSlideOver` and `OrderDetailSlideOver` are now standalone components (2026-04-22) ✅
+- `DateRangeFilter` and `MultiSelectFilter` still need extraction from `Opportunities.jsx`
+- For Global Search: mount slide-overs at app-level (App.jsx) driven by a `useGlobalDetail`
+  context so GlobalSearch can trigger them without knowing which page is rendered underneath
+- Global search keyboard shortcut (`⌘K`) should not fire when user is in an existing input field

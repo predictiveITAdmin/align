@@ -36,9 +36,17 @@ router.get('/', requireAuth, async (req, res) => {
     if (status)    { params.push(status);    q += ` AND o.status = $${params.length}` }
     if (search) {
       params.push(`%${search}%`)
+      // Search: opp title, client name, any PO number, quote number (numeric or PITQ-prefixed),
+      // or quote title — so "11628" matches "PH - Linda PC (#PITQ11628)" and quote #11628.
       q += ` AND (o.title ILIKE $${params.length}
                   OR c.name ILIKE $${params.length}
-                  OR EXISTS (SELECT 1 FROM unnest(o.po_numbers) p WHERE p ILIKE $${params.length}))`
+                  OR EXISTS (SELECT 1 FROM unnest(o.po_numbers) p WHERE p ILIKE $${params.length})
+                  OR EXISTS (
+                    SELECT 1 FROM quotes qt
+                    WHERE qt.opportunity_id = o.id
+                      AND (qt.title ILIKE $${params.length}
+                           OR qt.quote_number::text ILIKE $${params.length})
+                  ))`
     }
     q += ` ORDER BY o.created_date DESC NULLS LAST LIMIT 2000`
 

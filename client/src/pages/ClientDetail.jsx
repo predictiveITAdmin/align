@@ -65,6 +65,8 @@ import DrillDownModal from '../components/DrillDownModal'
 import { ClientBudgetPanel } from './ClientBudget'
 import RecEditModal from '../components/RecEditModal'
 import QuoteLineItems from '../components/QuoteLineItems'
+import OppDetailSlideOver from '../components/OppDetailSlideOver'
+import OrderDetailSlideOver from '../components/OrderDetailSlideOver'
 
 const TABS = ['Overview', 'Roadmap', 'Budget', 'Assessments', 'Recommendations', 'Hardware', 'Software', 'Contacts', 'SaaS Licenses', 'Profile', 'Standards', 'Orders']
 
@@ -4571,9 +4573,11 @@ function ProcEmptyState({ icon: Icon, title, sub, linkTo, linkLabel }) {
 
 // ─── Tab: Procurement / Opportunities ────────────────────────────────────────
 function ClientOpportunitiesTab({ clientId }) {
-  const [opps, setOpps]           = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [showClosed, setShowClosed] = useState(false)
+  const [opps, setOpps]               = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [showClosed, setShowClosed]   = useState(false)
+  const [search, setSearch]           = useState('')
+  const [selectedOppId, setSelectedOppId] = useState(null)
 
   useEffect(() => {
     // include_closed=1 so the "All" toggle shows full client history;
@@ -4594,7 +4598,16 @@ function ClientOpportunitiesTab({ clientId }) {
   const openOpps = opps.filter(o => isOppOpen(o))
   const wonOpps  = opps.filter(o => isOppWon(o))
   const lostOpps = opps.filter(o => isOppLost(o))
-  const visible  = showClosed ? opps : openOpps
+  const baseList = showClosed ? opps : openOpps
+  const q = search.trim().toLowerCase()
+  const visible = q
+    ? baseList.filter(o =>
+        o.title?.toLowerCase().includes(q) ||
+        o.stage?.toLowerCase().includes(q) ||
+        o.assigned_resource_name?.toLowerCase().includes(q) ||
+        o.po_numbers?.some(p => p.toLowerCase().includes(q))
+      )
+    : baseList
 
   // Status pill for client opportunities tab
   function statusBadge(status) {
@@ -4634,9 +4647,26 @@ function ClientOpportunitiesTab({ clientId }) {
           View all <ChevronRight size={12} />
         </a>
       </div>
+
+      {/* Search box */}
+      <div className="relative mb-3">
+        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by name, stage, owner, or PO…"
+          className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400"
+        />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+            <X size={12} />
+          </button>
+        )}
+      </div>
+
       {visible.length === 0 ? (
-        <ProcEmptyState icon={Target} title="No open opportunities"
-          sub={(wonOpps.length + lostOpps.length) > 0 ? `${wonOpps.length + lostOpps.length} closed/lost — click "All" to see them` : ''}
+        <ProcEmptyState icon={Target} title={search ? 'No matching opportunities' : 'No open opportunities'}
+          sub={!search && (wonOpps.length + lostOpps.length) > 0 ? `${wonOpps.length + lostOpps.length} closed/lost — click "All" to see them` : ''}
         />
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -4655,7 +4685,9 @@ function ClientOpportunitiesTab({ clientId }) {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {visible.map(opp => (
-                <tr key={opp.id} className="hover:bg-gray-50/50 transition-colors">
+                <tr key={opp.id}
+                  className="hover:bg-gray-50/50 transition-colors cursor-pointer"
+                  onClick={() => setSelectedOppId(opp.id)}>
                   <td className="px-4 py-3 max-w-[220px]">
                     <p className="text-sm font-medium text-gray-900 truncate">{opp.title}</p>
                   </td>
@@ -4695,6 +4727,10 @@ function ClientOpportunitiesTab({ clientId }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {selectedOppId && (
+        <OppDetailSlideOver oppId={selectedOppId} onClose={() => setSelectedOppId(null)} />
       )}
     </div>
   )
@@ -4843,14 +4879,20 @@ function ClientQuotesTab({ clientId }) {
 
 // ─── Tab: Procurement / Orders ────────────────────────────────────────────────
 function ClientOrdersTab({ clientId }) {
-  const [orders, setOrders] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [orders, setOrders]             = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [selectedOrderId, setSelectedOrderId] = useState(null)
 
-  useEffect(() => {
+  function loadOrders() {
     api.get(`/orders?client_id=${clientId}&limit=100&open_only=0`)
       .then(r => setOrders(r.data || []))
       .catch(console.error)
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadOrders()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId])
 
   if (loading) return <div className="text-center py-16 text-gray-400"><Loader2 size={20} className="animate-spin mx-auto" /></div>
@@ -4883,7 +4925,9 @@ function ClientOrdersTab({ clientId }) {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {orders.map(ord => (
-              <tr key={ord.id} className="hover:bg-gray-50/50 transition-colors">
+              <tr key={ord.id}
+                className="hover:bg-gray-50/50 transition-colors cursor-pointer"
+                onClick={() => setSelectedOrderId(ord.id)}>
                 <td className="px-4 py-3 font-mono text-xs text-gray-700">{ord.distributor_order_id}</td>
                 <td className="px-4 py-3 text-xs text-gray-600">{DIST_LABELS[ord.distributor] || ord.distributor}</td>
                 <td className="px-4 py-3 font-mono text-xs text-gray-700">{ord.po_number || '—'}</td>
@@ -4902,6 +4946,14 @@ function ClientOrdersTab({ clientId }) {
           </tbody>
         </table>
       </div>
+
+      {selectedOrderId && (
+        <OrderDetailSlideOver
+          orderId={selectedOrderId}
+          onClose={() => setSelectedOrderId(null)}
+          onRefresh={loadOrders}
+        />
+      )}
     </div>
   )
 }
