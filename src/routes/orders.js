@@ -9,14 +9,20 @@ const opportunitiesSync = require('../services/opportunitiesSync')
 const { matchAllUnmatched, getMatchSuggestions } = require('../services/orderMatcher')
 const { syncAllSuppliers } = require('../services/distributorSync')
 
+// Open-order statuses — everything that hasn't reached delivered/cancelled
+const OPEN_ORDER_STATUSES = ['submitted','confirmed','partially_shipped','shipped','backordered','out_for_delivery','exception']
+
 // ─── GET /api/orders — list with filters ─────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
-  const { distributor, status, client_id, match_status, search, from_date, to_date, limit = 200 } = req.query
+  // open_only=1 (default) → show only non-delivered orders; pass open_only=0 for all
+  const { distributor, status, client_id, match_status, search,
+          from_date, to_date, open_only, limit = 500 } = req.query
   try {
     let q = `
       SELECT o.*,
              c.name AS client_name,
              opp.title AS opportunity_title,
+             opp.category AS opportunity_category,
              opp.autotask_opportunity_id AS autotask_opportunity_id,
              qu.quote_number,
              (SELECT json_agg(row_to_json(i)) FROM (
@@ -34,12 +40,22 @@ router.get('/', requireAuth, async (req, res) => {
       WHERE o.tenant_id = $1`
     const params = [req.tenant.id]
 
+    // Default: orders from 2021-01-01 onward unless caller specifies from_date
+    const effectiveFrom = from_date || '2021-01-01'
+    params.push(effectiveFrom); q += ` AND (o.order_date >= $${params.length} OR o.order_date IS NULL)`
+
     if (distributor)  { params.push(distributor);  q += ` AND o.distributor = $${params.length}` }
-    if (status)       { params.push(status);       q += ` AND o.status = $${params.length}` }
     if (client_id)    { params.push(client_id);    q += ` AND o.client_id = $${params.length}` }
     if (match_status) { params.push(match_status); q += ` AND o.match_status = $${params.length}` }
-    if (from_date)    { params.push(from_date);    q += ` AND o.order_date >= $${params.length}` }
     if (to_date)      { params.push(to_date);      q += ` AND o.order_date <= $${params.length}` }
+
+    // Status: explicit status filter overrides open_only
+    if (status) {
+      params.push(status); q += ` AND o.status = $${params.length}`
+    } else if (open_only !== '0') {
+      // Default view: open orders only (exclude delivered + cancelled)
+      q += ` AND o.status NOT IN ('delivered','cancelled')`
+    }
 
     if (search) {
       params.push(`%${search}%`)

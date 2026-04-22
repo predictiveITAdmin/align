@@ -165,7 +165,8 @@ async function getSyncSettings(tenantId) {
 // ─── Sync Opportunities ──────────────────────────────────────────────────────
 async function syncOpportunities(tenantId) {
   const client = buildClient()
-  const stageLabels = await getPicklistLabels(client, 'Opportunities', 'stage')
+  const stageLabels    = await getPicklistLabels(client, 'Opportunities', 'stage')
+  const categoryLabels = await getPicklistLabels(client, 'Opportunities', 'opportunityCategory')
   const cfg = await getSyncSettings(tenantId)
 
   // Incremental: only pull opportunities changed since last sync (or all if first run)
@@ -216,8 +217,9 @@ async function syncOpportunities(tenantId) {
       }
 
       // Resolve status label from picklist ID
-      const statusLabel = AT_STATUS_LABELS[opp.status] || `Status ${opp.status}`
-      const stageLabel  = stageLabels[opp.stage] || String(opp.stage ?? '')
+      const statusLabel   = AT_STATUS_LABELS[opp.status] || `Status ${opp.status}`
+      const stageLabel    = stageLabels[opp.stage] || String(opp.stage ?? '')
+      const categoryLabel = categoryLabels[opp.opportunityCategory] || null
 
       // Skip by status — don't add new opps with excluded statuses
       const excludeStatuses = cfg.exclude_statuses || DEFAULT_EXCLUDE_STATUSES
@@ -245,16 +247,17 @@ async function syncOpportunities(tenantId) {
       await db.query(`
         INSERT INTO opportunities (
           tenant_id, client_id, autotask_opportunity_id,
-          title, stage, status, amount, po_numbers,
+          title, stage, status, category, amount, po_numbers,
           assigned_resource_id, source,
           expected_close, created_date, closed_date,
           metadata, last_synced_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW())
         ON CONFLICT (autotask_opportunity_id) DO UPDATE SET
           client_id              = EXCLUDED.client_id,
           title                  = EXCLUDED.title,
           stage                  = EXCLUDED.stage,
           status                 = EXCLUDED.status,
+          category               = EXCLUDED.category,
           amount                 = EXCLUDED.amount,
           po_numbers             = EXCLUDED.po_numbers,
           assigned_resource_id   = EXCLUDED.assigned_resource_id,
@@ -271,6 +274,7 @@ async function syncOpportunities(tenantId) {
         opp.title || `Opportunity ${opp.id}`,
         stageLabel,
         statusLabel,
+        categoryLabel,
         opp.amount ?? opp.oneTimeRevenue ?? null,
         poArray,
         opp.ownerResourceID || null,

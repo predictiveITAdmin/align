@@ -17,6 +17,7 @@
 6. **CSAT & Client Health** — Customer Thermometer integration, satisfaction trends
 7. **Report Builder** — BrightGauge replacement, templated QBR/monthly/annual deliverables, PDF export
 8. **Budget Roadmaps** — Multi-year lifecycle + project + recurring cost forecasting
+9. **Order Management** — Distributor order tracking, PO matching, opportunity linkage (see below)
 
 ---
 
@@ -44,6 +45,61 @@ All 9 data sources confirmed working. Full API details in [`api-integrations.md`
 - Report builder replaces BrightGauge with native templated output
 - EOS built custom rather than integrating Strety beta API
 - Multi-tenant MSP model with role-based access (Admin, vCIO/vCISO, TAM, Client read-only)
+
+---
+
+## Order Management Module
+
+Tracks distributor orders from TD Synnex, Ingram Micro, Amazon Business, and Provantage. Links orders to Autotask opportunities via PO numbers, enables full procurement visibility per client.
+
+### Distributor Adapters
+
+| Adapter key | Distributor | Mode |
+|---|---|---|
+| `tdsynnex_esolutions` | TD Synnex | SOAP/XML API (WS-Security) — **active** |
+| `tdsynnex_ecx` | TD Synnex (legacy) | stub only |
+| `ingram_xi` | Ingram Micro | REST API (Xvantage XI) |
+| `amazon_business_csv` | Amazon Business | CSV import |
+| `provantage_manual` | Provantage | Manual entry |
+
+### PO-Driven Sync (TD Synnex)
+
+TD Synnex eSolutions has no "list all orders" endpoint. The sync driver:
+1. Queries local `opportunities` table for all POs from **Closed/Implemented** opportunities
+2. **Excludes opportunities where `category = 'Monthly Recurring Revenue'`** — MRR contracts are subscription-based and never have distributor POs
+3. Calls `getPOStatus(poNo)` for each PO via SOAP
+4. Upserts results into `distributor_orders` + runs the order matcher
+
+### Default Date Range
+
+Order sync defaults to `2021-01-01` as the earliest `from_date` when no `last_sync_at` exists. This ensures all historical orders since 2021 are captured on first sync. On subsequent runs, the adapter uses `last_sync_at` as the incremental cursor.
+
+### Order Statuses
+
+`submitted` → `confirmed` → `partially_shipped` → `shipped` → `delivered`
+Also: `backordered`, `out_for_delivery`, `exception`, `cancelled`, `returned`
+
+### Default View: Open Orders
+
+The `/api/orders` endpoint defaults to `open_only=1` — returning only orders that are **not** `delivered` or `cancelled`. This shows the active pipeline of in-flight orders.
+- Pass `open_only=0` to load full history (all statuses, from 2021-01-01)
+- Frontend toggle: "Open Orders" (default) / "All History"
+
+### PO Matching Pipeline
+
+Auto-matches orders to opportunities via cascade:
+1. **PO exact match** (confidence 100) — `order.po_number IN opportunity.po_numbers[]`
+2. **PO fuzzy match** (confidence 80) — normalized (strip prefix, uppercase)
+3. **Client name match** (confidence 60) — `ship_to_name` vs client name (≥70% word overlap)
+
+Unmatched orders (`match_status = 'unmapped'`) can be manually mapped via the PO Mapper UI. On manual match:
+- Order is linked to the opportunity
+- The PO number is **written back to Autotask** via `PATCH /Opportunities/{id}` (UDF: "Purchase Order Number")
+- Local `opportunities.po_numbers[]` is updated
+
+### MRR Category Rule
+
+Only opportunities with `category != 'Monthly Recurring Revenue'` participate in PO matching. Recurring-revenue contracts (O365, managed services agreements, etc.) are billed by subscription and will never generate a distributor PO. This filter applies both to the PO-number collection query and is surfaced in the UI as `opportunity_category` on order rows.
 
 ---
 

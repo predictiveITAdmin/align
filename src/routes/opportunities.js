@@ -9,7 +9,7 @@ const opportunitiesSync = require('../services/opportunitiesSync')
 
 // ─── GET /api/opportunities — list with filters ──────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
-  const { client_id, stage, status, search, include_unlinked } = req.query
+  const { client_id, stage, status, search, include_unlinked, include_closed } = req.query
   try {
     let q = `
       SELECT o.*, c.name AS client_name,
@@ -25,6 +25,12 @@ router.get('/', requireAuth, async (req, res) => {
       q += ` AND o.client_id IS NOT NULL`
     }
 
+    // By default, hide Closed/Lost from the global list unless explicitly requested
+    // (client detail tab passes include_closed=1 to show full history)
+    if (!include_closed && !status && !client_id) {
+      q += ` AND o.status NOT IN ('Lost', 'Not Ready To Buy')`
+    }
+
     if (client_id) { params.push(client_id); q += ` AND o.client_id = $${params.length}` }
     if (stage)     { params.push(stage);     q += ` AND o.stage = $${params.length}` }
     if (status)    { params.push(status);    q += ` AND o.status = $${params.length}` }
@@ -34,7 +40,7 @@ router.get('/', requireAuth, async (req, res) => {
                   OR c.name ILIKE $${params.length}
                   OR EXISTS (SELECT 1 FROM unnest(o.po_numbers) p WHERE p ILIKE $${params.length}))`
     }
-    q += ` ORDER BY o.created_date DESC NULLS LAST LIMIT 500`
+    q += ` ORDER BY o.created_date DESC NULLS LAST LIMIT 2000`
 
     const r = await db.query(q, params)
     res.json({ data: r.rows, total: r.rowCount })

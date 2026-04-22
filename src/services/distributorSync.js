@@ -36,8 +36,10 @@ async function syncSupplier(supplier) {
   const creds = decryptCredentials(encryptedCreds || {})
   const config = { environment: environment || 'production', base_url }
 
-  // Incremental: use last successful sync as the since date
-  const since = supplier.last_sync_at || null
+  // Incremental: use last successful sync, falling back to 2021-01-01 so we
+  // capture all historical orders rather than only those placed after first run.
+  const ORDER_DEFAULT_SINCE = new Date('2021-01-01T00:00:00Z')
+  const since = supplier.last_sync_at ? new Date(supplier.last_sync_at) : ORDER_DEFAULT_SINCE
 
   console.log(`[distributorSync] ${adapter_key} (tenant ${tenantId}): syncing since ${since || '(full)'}`)
 
@@ -48,15 +50,18 @@ async function syncSupplier(supplier) {
   // Closed = won deal completed; Implemented = fulfilled. Lost/Not Ready have no POs.
   let fetchOptions = {}
   if (adapter.syncStrategy === 'po_driven') {
+    // Only closed-won opportunities have POs. Exclude MRR (Monthly Recurring Revenue)
+    // category opps — recurring contracts are never purchased via distributor POs.
     const poRes = await db.query(
       `SELECT DISTINCT unnest(po_numbers) AS po FROM opportunities
        WHERE tenant_id = $1
          AND array_length(po_numbers, 1) > 0
-         AND status IN ('Closed', 'Implemented')`,
+         AND status IN ('Closed', 'Implemented')
+         AND (category IS NULL OR category NOT ILIKE '%Monthly Recurring Revenue%')`,
       [tenantId]
     )
     const poNumbers = poRes.rows.map(r => r.po).filter(Boolean)
-    console.log(`[distributorSync] ${adapter_key}: PO-driven mode, ${poNumbers.length} PO numbers from closed-won opportunities`)
+    console.log(`[distributorSync] ${adapter_key}: PO-driven mode, ${poNumbers.length} PO numbers from closed-won non-MRR opportunities`)
     if (!poNumbers.length) {
       console.log(`[distributorSync] ${adapter_key}: no PO numbers in closed-won opportunities, skipping`)
       return { ok: true, skipped: true, reason: 'no_po_numbers' }
