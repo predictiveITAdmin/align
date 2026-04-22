@@ -50,17 +50,31 @@ All 9 data sources confirmed working. Full API details in [`api-integrations.md`
 
 ## Order Management Module
 
-Tracks distributor orders from TD Synnex, Ingram Micro, Amazon Business, and Provantage. Links orders to Autotask opportunities via PO numbers, enables full procurement visibility per client.
+Tracks distributor orders from TD Synnex, Ingram Micro, Dell Premier, Amazon Business, and Provantage. Links orders to Autotask opportunities via PO numbers, enables full procurement visibility per client.
 
 ### Distributor Adapters
 
-| Adapter key | Distributor | Mode |
-|---|---|---|
-| `tdsynnex_esolutions` | TD Synnex | SOAP/XML API (WS-Security) — **active** |
-| `tdsynnex_ecx` | TD Synnex (legacy) | stub only |
-| `ingram_xi` | Ingram Micro | REST API (Xvantage XI) |
-| `amazon_business_csv` | Amazon Business | CSV import |
-| `provantage_manual` | Provantage | Manual entry |
+| Adapter key | Distributor | Sync Strategy | Status |
+|---|---|---|---|
+| `tdsynnex_esolutions` | TD Synnex | PO-driven (SOAP/XML WS-Security) | **Active** |
+| `tdsynnex_ecx` | TD Synnex (legacy) | stub only | Deprecated |
+| `ingram_xi` | Ingram Micro | Date-range REST (Xvantage XI) | Sandbox |
+| `dell_premier` | Dell Premier | Date-range REST (OAuth2) | Pending credentials |
+| `amazon_business_csv` | Amazon Business | CSV import | Active |
+| `provantage_manual` | Provantage | Manual entry | Active |
+
+### Dell Premier API Integration
+
+Dell Premier provides a REST API for enterprise accounts to query order history.
+
+**Authentication:** OAuth2 Client Credentials  
+**Token URL:** `https://apigtwb2c.us.dell.com/auth/oauth/v2/token`  
+**API Base:** `https://apigtwb2c.us.dell.com/PROD/v1`  
+**Sync strategy:** `date_range` — queries `GET /orders?fromOrderDate={since}`, paginated  
+**Required credentials:** Client ID, Client Secret (from Dell Premier portal)  
+**Optional:** Customer account number (to filter orders by account)
+
+To activate: configure via Settings → Suppliers → Add Supplier → "Dell Premier". Contact Dell account team or Premier portal to obtain API credentials.
 
 ### PO-Driven Sync (TD Synnex)
 

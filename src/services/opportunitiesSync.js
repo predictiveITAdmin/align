@@ -101,7 +101,8 @@ async function* queryAll(client, entity, filter, maxPages = 200) {
       if (!isFirst && (err.response?.status === 405 || err.response?.status === 400)) {
         console.warn(`[queryAll] ${entity} page ${pageCount}: GET returned ${err.response.status}, retrying as POST`)
         try {
-          res = await client.post(`/${entity}/query`, { ...body, filter })
+          // POST to the actual nextUrl (which contains the cursor/page token), not base endpoint
+          res = await client.post(nextUrl, body)
         } catch (retryErr) {
           console.error(`[queryAll] ${entity} POST retry failed:`, retryErr.message)
           break
@@ -196,18 +197,22 @@ async function getSyncSettings(tenantId) {
 }
 
 // ─── Sync Opportunities ──────────────────────────────────────────────────────
-async function syncOpportunities(tenantId) {
+async function syncOpportunities(tenantId, forceSince = null) {
   const client = buildClient()
   const stageLabels    = await getPicklistLabels(client, 'Opportunities', 'stage')
   const categoryLabels = await getPicklistLabels(client, 'Opportunities', 'opportunityCategory')
   const cfg = await getSyncSettings(tenantId)
 
   // Incremental: only pull opportunities changed since last sync (or all if first run)
-  const sinceRow = await db.query(
-    `SELECT MAX(last_synced_at) AS t FROM opportunities WHERE tenant_id = $1`,
-    [tenantId]
-  )
-  const since = sinceRow.rows[0]?.t
+  // forceSince overrides the DB cursor — use for full historical re-sync
+  let since = forceSince
+  if (!since) {
+    const sinceRow = await db.query(
+      `SELECT MAX(last_synced_at) AS t FROM opportunities WHERE tenant_id = $1`,
+      [tenantId]
+    )
+    since = sinceRow.rows[0]?.t
+  }
 
   console.log('[opportunitiesSync] pulling Opportunities, since:', since || '(full)', '| settings:', cfg)
   let count = 0, skipped = 0, errors = 0
@@ -341,66 +346,96 @@ async function syncOpportunities(tenantId) {
 }
 
 // ─── Sync Quotes for opportunities we have locally ───────────────────────────
-async function syncQuotes(tenantId) {
+/**
+ * Batch quote sync — queries AT Quotes by date range instead of per-opp.
+ * On incremental runs this is a single paginated AT call; on full pull (forceSince)
+ * it pages through all quotes and matches to local opps by opportunityID.
+ *
+ * @param {string} tenantId
+ * @param {Date|null} forceSince — override date cursor (use new Date('2020-01-01') for full pull)
+ */
+async function syncQuotes(tenantId, forceSince = null) {
   const client = buildClient()
   const statusLabels = await getPicklistLabels(client, 'Quotes', 'status')
 
-  // For each opportunity we have, pull its quotes
-  const opps = await db.query(
+  // Build local opp lookup: AT opp ID → local UUID
+  const oppsRes = await db.query(
     `SELECT id, autotask_opportunity_id FROM opportunities
      WHERE tenant_id = $1 AND autotask_opportunity_id IS NOT NULL`,
     [tenantId]
   )
+  const oppByAtId = {}
+  for (const o of oppsRes.rows) oppByAtId[String(o.autotask_opportunity_id)] = o.id
+
+  // Incremental cursor: pull quotes changed/created since last quote sync
+  let since = forceSince
+  if (!since) {
+    const sinceRow = await db.query(
+      `SELECT MAX(q.last_synced_at) AS t
+       FROM quotes q JOIN opportunities o ON o.id = q.opportunity_id
+       WHERE o.tenant_id = $1`,
+      [tenantId]
+    )
+    since = sinceRow.rows[0]?.t
+  }
+
+  console.log('[opportunitiesSync] pulling Quotes, since:', since || '(full)')
+
+  // Batch filter: all quotes with opportunityID > 0 (all), optionally date-limited
+  const filter = [{ field: 'opportunityID', op: 'gt', value: 0 }]
+  if (since) {
+    filter.push({ field: 'lastActivityDate', op: 'gte', value: new Date(since).toISOString() })
+  }
 
   let count = 0, errors = 0
-  for (const opp of opps.rows) {
-    try {
-      const filter = [{ field: 'opportunityID', op: 'eq', value: opp.autotask_opportunity_id }]
-      for await (const q of queryAll(client, 'Quotes', filter)) {
-        // Detect source — QuoteWerks vs KQM — via external ID pattern if available
-        let source = null
-        let externalRef = null
-        if (q.externalQuoteNumber) {
-          externalRef = q.externalQuoteNumber
-          // QuoteWerks typically has numeric doc IDs; KQM has its own format
-          if (/^QW/i.test(externalRef) || /^\d{5,}$/.test(externalRef)) source = 'quotewerks'
-          else if (/^KQM/i.test(externalRef)) source = 'kqm'
-        }
+  for await (const q of queryAll(client, 'Quotes', filter)) {
+    const localOppId = oppByAtId[String(q.opportunityID)]
+    if (!localOppId) continue   // Quote belongs to an opp we don't track
 
-        await db.query(`
-          INSERT INTO quotes (
-            opportunity_id, autotask_quote_id, quote_number,
-            title, status, amount, valid_until,
-            source, quote_external_ref, metadata, last_synced_at
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
-          ON CONFLICT (autotask_quote_id) DO UPDATE SET
-            quote_number        = EXCLUDED.quote_number,
-            title               = EXCLUDED.title,
-            status              = EXCLUDED.status,
-            amount              = EXCLUDED.amount,
-            valid_until         = EXCLUDED.valid_until,
-            source              = COALESCE(quotes.source, EXCLUDED.source),
-            quote_external_ref  = COALESCE(quotes.quote_external_ref, EXCLUDED.quote_external_ref),
-            metadata            = EXCLUDED.metadata,
-            last_synced_at      = NOW(),
-            updated_at          = NOW()
-        `, [
-          opp.id,
-          q.id,
-          q.quoteNumber || String(q.id),
-          q.name || q.description || null,
-          statusLabels[q.status] || String(q.status ?? ''),
-          q.totalAmount ?? null,
-          q.expirationDate || null,
-          source,
-          externalRef,
-          q,
-        ])
-        count++
+    try {
+      // Detect source — QuoteWerks vs KQM — via external ID pattern if available
+      let source = null
+      let externalRef = null
+      if (q.externalQuoteNumber) {
+        externalRef = q.externalQuoteNumber
+        // QuoteWerks typically has numeric doc IDs; KQM has its own format
+        if (/^QW/i.test(externalRef) || /^\d{5,}$/.test(externalRef)) source = 'quotewerks'
+        else if (/^KQM/i.test(externalRef)) source = 'kqm'
       }
+
+      await db.query(`
+        INSERT INTO quotes (
+          opportunity_id, autotask_quote_id, quote_number,
+          title, status, amount, valid_until,
+          source, quote_external_ref, metadata, last_synced_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+        ON CONFLICT (autotask_quote_id) DO UPDATE SET
+          quote_number        = EXCLUDED.quote_number,
+          title               = EXCLUDED.title,
+          status              = EXCLUDED.status,
+          amount              = EXCLUDED.amount,
+          valid_until         = EXCLUDED.valid_until,
+          source              = COALESCE(quotes.source, EXCLUDED.source),
+          quote_external_ref  = COALESCE(quotes.quote_external_ref, EXCLUDED.quote_external_ref),
+          metadata            = EXCLUDED.metadata,
+          last_synced_at      = NOW(),
+          updated_at          = NOW()
+      `, [
+        localOppId,
+        q.id,
+        q.quoteNumber || String(q.id),
+        q.name || q.description || null,
+        statusLabels[q.status] || String(q.status ?? ''),
+        q.totalAmount ?? null,
+        q.expirationDate || null,
+        source,
+        externalRef,
+        q,
+      ])
+      count++
     } catch (err) {
       errors++
-      console.error(`[opportunitiesSync] quotes error opp ${opp.autotask_opportunity_id}:`, err.message)
+      console.error(`[opportunitiesSync] quotes error opp ${q.opportunityID}:`, err.message)
     }
   }
 
@@ -409,14 +444,26 @@ async function syncQuotes(tenantId) {
 }
 
 // ─── Sync QuoteItems for quotes we have locally ──────────────────────────────
-async function syncQuoteItems(tenantId) {
+/**
+ * @param {string} tenantId
+ * @param {Date|null} forceSince — if provided, sync ALL quotes' items; if null,
+ *   only sync items for quotes updated in the last ~4 hours (fast incremental mode).
+ */
+async function syncQuoteItems(tenantId, forceSince = null) {
   const client = buildClient()
+
+  // Incremental mode: only re-fetch items for quotes that were synced recently.
+  // This avoids 1,000+ AT API calls on every scheduled run.
+  // Full pull (forceSince): sync all quotes' items unconditionally.
+  const sinceClause = forceSince
+    ? ''
+    : `AND q.last_synced_at > NOW() - INTERVAL '4 hours'`
 
   const quotes = await db.query(
     `SELECT q.id, q.autotask_quote_id
      FROM quotes q
      JOIN opportunities o ON o.id = q.opportunity_id
-     WHERE o.tenant_id = $1 AND q.autotask_quote_id IS NOT NULL`,
+     WHERE o.tenant_id = $1 AND q.autotask_quote_id IS NOT NULL ${sinceClause}`,
     [tenantId]
   )
 
@@ -520,12 +567,16 @@ async function appendPoToAutotask(opportunityLocalId, newPo) {
 }
 
 // ─── Run all three in sequence for a tenant ──────────────────────────────────
-async function syncAll(tenantId) {
+/**
+ * @param {string} tenantId
+ * @param {Date|null} forceSince  — override the incremental cursor (full-pull if set)
+ */
+async function syncAll(tenantId, forceSince = null) {
   const started = Date.now()
   console.log(`[opportunitiesSync] starting full sync for tenant ${tenantId}`)
-  const opps = await syncOpportunities(tenantId)
-  const quotes = await syncQuotes(tenantId)
-  const items = await syncQuoteItems(tenantId)
+  const opps = await syncOpportunities(tenantId, forceSince)
+  const quotes = await syncQuotes(tenantId, forceSince)
+  const items = await syncQuoteItems(tenantId, forceSince)
   const elapsed = Math.round((Date.now() - started) / 1000)
   console.log(`[opportunitiesSync] completed in ${elapsed}s`, { opps, quotes, items })
   return { elapsed_seconds: elapsed, ...({ opps, quotes, items }) }

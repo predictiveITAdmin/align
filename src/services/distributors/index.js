@@ -40,6 +40,7 @@ const tdsynnexEcx        = require('./tdsynnex_ecx')
 const tdsynnexEsolutions = require('./tdsynnex_esolutions')
 const amazonBusinessCsv  = require('./amazon_business_csv')
 const provantageManual   = require('./provantage_manual')
+const dellPremier        = require('./dell_premier')
 
 const adapters = {
   ingram_xi:            ingramXi,
@@ -47,6 +48,7 @@ const adapters = {
   tdsynnex_esolutions:  tdsynnexEsolutions, // active — eSolutions XML/SOAP API
   amazon_business_csv:  amazonBusinessCsv,
   provantage_manual:    provantageManual,
+  dell_premier:         dellPremier,        // Dell Premier / Business Direct order API
 }
 
 function getAdapter(key) {
