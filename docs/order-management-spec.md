@@ -80,7 +80,7 @@ shipped to clients, needs delivery + serial + warranty tracking.
 |---|---|---|
 | 1 | **Ingram Micro** | Xvantage platform (2024+). High volume. |
 | 1 | **TD Synnex** | SynnexConnect / ECExpress. High volume. |
-| 2 | **Provantage** | Smaller. API availability TBD — research needed. |
+| 2 | **Provantage** | No public API. Email parse mode (order confirmation + ship emails). |
 | 2 | **Amazon Business** | SP-API + Business Order APIs. Auth complex. |
 | 3 | **D&H, Arrow, ScanSource, others** | Future phase, roadmap only. |
 | — | Pax8 | Software-only, **skip** for this module. |
@@ -449,7 +449,20 @@ Filters global view to this client, plus:
 
 **Phase H — Reports** (~2 days)
 
-Total: ~17-22 days for everything, ~12 days for MVP (A-E) with Ingram + Synnex.
+**Phase I — Email parser (no-API distributors)** (~2-3 days)
+- Add `email_from_domains` + `inbound_email_addr` to suppliers table
+- Inbound email webhook endpoint: `POST /api/inbound-email/:tenantSlug`
+- Route email to supplier adapter by From: domain lookup
+- `mailparser` + `cheerio` for MIME decode + HTML table extraction
+- Provantage adapter: implement `parseEmail(text, html)`
+- Generic fallback: subject-line PO extraction for any unknown structured email
+- `inbound_email_log` table + admin UI (parse history, unrecognized senders)
+- Sync mode `email_parse` option in supplier config drawer
+- Inbound email setup guide (forwarding rule or direct-to-distributor config)
+- Email provider integration: SendGrid Inbound Parse or Mailgun Routes
+  (one provider, configurable via `INBOUND_EMAIL_PROVIDER` env var)
+
+Total: ~19-25 days for everything, ~12 days for MVP (A-E) with Ingram + Synnex.
 
 ## Distributor API research — next action
 
@@ -582,6 +595,123 @@ instead:
 
 This keeps all suppliers in one unified Orders view regardless of
 connection method.
+
+### Email parser mode (for distributors with no API — Provantage, others)
+
+Some distributors (Provantage, smaller regional suppliers) have no API and
+no CSV export worth automating. They do send structured order confirmation
+and shipment emails. The email parser lets Align ingest those automatically.
+
+#### How it works
+
+1. **Inbound email address** — a unique per-tenant address like
+   `orders+<tenant_slug>@mail.align.predictiveit.ai` (or a subdomain).
+   Configured via a forwarding rule on the MSP's email system, or the
+   MSP gives Align's address directly to the distributor as the "order
+   confirmation" delivery address.
+2. **Inbound email webhook** — email provider (SendGrid/Mailgun/Postmark)
+   delivers inbound email as a webhook `POST /api/inbound-email/<tenant_slug>`.
+3. **Parser pipeline** — email body (HTML or plain text) passes through a
+   per-distributor parser that extracts:
+   - Order ID, PO number, order date
+   - Line items (part number, description, quantity, unit price)
+   - Ship-to name + address
+   - Status (confirmed / shipped / backordered)
+   - Tracking number(s) + carrier
+4. **Normalized order** — same shape as all other adapters → upserted into
+   `distributor_orders` → matcher runs → same UI as API-sourced orders.
+
+#### Parser architecture
+
+```
+POST /api/inbound-email/:tenantSlug
+  → look up tenant
+  → detect distributor from From: address (mapped in supplier config)
+  → call adapter.parseEmail(rawEmailText, htmlBody)
+  → [normalizedOrders] → upsert + match
+  → log to inbound_email_log
+```
+
+Each adapter can optionally implement `parseEmail(text, html)`:
+
+```js
+// Example: provantage adapter
+async function parseEmail(text, html) {
+  // Extract order ID from subject/body
+  // Use regex or cheerio/node-html-parser for HTML emails
+  // Return same normalizedOrder[] shape as fetchOrders
+  return [{ distributor_order_id, po_number, status, items, ... }]
+}
+```
+
+Adapters that have APIs don't need `parseEmail` — it's purely additive.
+The registry notes `supported_sync_modes: ['email_parse']` for these.
+
+#### Per-distributor email detection
+
+The `suppliers` table gets a new `email_from_domains text[]` column —
+e.g. `{provantage.com, orders.provantage.com}`. When an inbound email
+arrives, Align matches the From: domain against all tenant suppliers to
+route it to the right adapter.
+
+#### Supplier config additions
+
+```
+suppliers (additions)
+  email_from_domains  text[]    ← From: domains that identify this supplier
+  inbound_email_addr  text      ← generated receive address for this tenant
+                                   e.g. "orders+acme-provantage@mail.align…"
+```
+
+Admin UI additions under the supplier configure drawer:
+- **Sync mode** dropdown gains `email_parse` option
+- When selected: shows the inbound email address (copy-to-clipboard)
+- Shows last N email parse results (date, subject line, orders extracted)
+- "Forward test" button — sends a test payload through the parse pipeline
+
+#### Email parse log table
+
+```sql
+CREATE TABLE inbound_email_log (
+  id            BIGSERIAL PRIMARY KEY,
+  tenant_id     UUID NOT NULL REFERENCES tenants(id),
+  supplier_id   UUID REFERENCES suppliers(id),
+  received_at   TIMESTAMPTZ DEFAULT NOW(),
+  from_address  TEXT,
+  subject       TEXT,
+  orders_parsed INTEGER DEFAULT 0,
+  status        TEXT DEFAULT 'ok',   -- 'ok' | 'no_parser' | 'parse_error' | 'duplicate'
+  error_detail  TEXT,
+  raw_email_id  TEXT                 -- provider's message ID
+);
+```
+
+#### Parser implementation notes
+
+- Use `mailparser` npm package to handle MIME, multipart, charsets.
+- Provantage HTML emails: table-based, `cheerio` sufficient for extraction.
+- For unknown senders, log to `inbound_email_log` with status `'no_parser'`
+  and surface to admin as "unrecognized distributor emails" so they can
+  add a new supplier config.
+- **PO number is the primary match key** — if the email contains a PO field
+  we trust that first; fall back to subject-line extraction (`/PO[:\s#]*([A-Z0-9-]+)/i`).
+- Duplicate detection: `ON CONFLICT (distributor, distributor_order_id) DO UPDATE`
+  same as API/CSV path — re-parsing the same email is safe.
+
+#### Security
+
+- Inbound email endpoint (`POST /api/inbound-email/:tenantSlug`) is public
+  (no JWT). Rate-limited by IP.
+- Validate webhook signature from email provider (SendGrid/Mailgun both
+  support HMAC signing of inbound webhooks).
+- `tenantSlug` in the URL is the only tenant identifier — no secret in the URL.
+  The provider signs the payload so tampering is detectable.
+
+#### Build phase
+
+See **Phase I** in the build phases list.
+
+---
 
 ### Credential security best-practices
 
