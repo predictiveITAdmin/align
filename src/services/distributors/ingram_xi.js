@@ -16,14 +16,20 @@ const PROD_BASE    = 'https://api.ingrammicro.com:443'
 // Sandbox in Ingram XI is just a path prefix on the same host
 const SANDBOX_BASE = 'https://api.ingrammicro.com:443/sandbox'
 const TOKEN_PATH   = '/oauth/oauth20/token'
+// "Order Management v6" product → base path /resellers/v6
+// "Async Order Management v7" is for order CREATE + single-order lookup only.
+// Order SEARCH/LIST uses v6 on the same base URL.
+const API_VERSION  = 'v6'
 
 const REQUIRED_FIELDS = [
-  { name: 'client_id',       label: 'Consumer Key',      type: 'text',     secret: false,
-    help: 'From developer.ingrammicro.com → your app → Consumer Key' },
-  { name: 'client_secret',   label: 'Consumer Secret',   type: 'text',     secret: true,
-    help: 'From developer.ingrammicro.com → your app → Consumer Secret' },
+  { name: 'client_id',       label: 'Client ID',         type: 'text',     secret: false,
+    help: 'From developer.ingrammicro.com → Apps → your app → "Client ID"' },
+  { name: 'client_secret',   label: 'Client Secret',     type: 'text',     secret: true,
+    help: 'From developer.ingrammicro.com → Apps → your app → "Client Secret"' },
+  { name: 'webhook_secret',  label: 'Secret Key',        type: 'text',     secret: true,
+    help: 'From developer.ingrammicro.com → Apps → your app → "Secret Key" (used for webhook signature verification)' },
   { name: 'customer_number', label: 'Customer Number',   type: 'text',     secret: false,
-    help: 'Your Ingram Micro reseller account number (e.g. 70-797941)' },
+    help: 'Your Ingram Micro reseller account number — visible as the numeric prefix in your app name (e.g. 70-797941)' },
   { name: 'country_code',    label: 'Country Code',      type: 'text',     secret: false,
     help: 'Default "US"', default: 'US' },
 ]
@@ -83,16 +89,19 @@ async function getToken(creds, config) {
 }
 
 function buildClient(token, creds, config) {
-  const base = config.environment === 'sandbox' ? SANDBOX_BASE : PROD_BASE
+  const base    = config.environment === 'sandbox' ? SANDBOX_BASE : PROD_BASE
+  const version = config._versionOverride || API_VERSION
+  const headers = {
+    'Authorization':    `Bearer ${token}`,
+    'IM-CountryCode':    creds.country_code || 'US',
+    'IM-CorrelationID':  `align-${Date.now()}`,
+    'Accept':            'application/json',
+  }
+  // IM-CustomerNumber is required by most endpoints — only add if provided
+  if (creds.customer_number) headers['IM-CustomerNumber'] = creds.customer_number
   return axios.create({
-    baseURL: `${base}/resellers/v6`,
-    headers: {
-      'Authorization':    `Bearer ${token}`,
-      'IM-CustomerNumber': creds.customer_number,
-      'IM-CountryCode':    creds.country_code || 'US',
-      'IM-CorrelationID':  `align-${Date.now()}`,
-      'Accept':            'application/json',
-    },
+    baseURL: `${base}/resellers/${version}`,
+    headers,
     timeout: 30000,
   })
 }
@@ -100,32 +109,54 @@ function buildClient(token, creds, config) {
 // ─── testConnection — called by admin UI ─────────────────────────────────────
 async function testConnection(creds, config = {}) {
   try {
+    // Step 1: get OAuth token
     const token = await getToken(creds, config)
-    if (!token) return { ok: false, message: 'No access token returned' }
+    if (!token) return { ok: false, message: 'No access token returned from Ingram OAuth' }
 
-    // Simple probe — hit the orders list with minimal filter
+    // Step 2: probe the orders search endpoint
+    // "Order Management v6" product → GET /resellers/v6/orders/ordersearch
     const client = buildClient(token, creds, config)
-    // Use a past date way back to limit results; we don't need real data, just 200 OK
-    const r = await client.get('/orders', {
-      params: { 'customer-number': creds.customer_number, 'page-size': 1 }
-    })
+    let r
+    let workingVersion = API_VERSION
+    const probeParams = { pageSize: 1, pageNumber: 1 }
+
+    try {
+      r = await client.get('/orders/ordersearch', { params: probeParams })
+    } catch (probeErr) {
+      // If v6 fails with 401 (product not yet active), try v6.1 as fallback
+      if (probeErr.response?.status === 401) {
+        const client61 = buildClient(token, creds, { ...config, _versionOverride: 'v6.1' })
+        r = await client61.get('/orders/ordersearch', { params: probeParams })
+        workingVersion = 'v6.1'
+      } else {
+        throw probeErr
+      }
+    }
 
     return {
       ok: true,
       message: 'Connected successfully',
       details: {
-        recordsReachable: r.data?.recordsFound ?? r.data?.totalResults ?? 'unknown',
+        recordsFound: r.data?.recordsFound ?? r.data?.totalRecords ?? r.data?.orders?.length ?? 'ok',
         environment: config.environment || 'production',
+        apiVersion: workingVersion,
       }
     }
   } catch (err) {
-    const data = err.response?.data
+    const status  = err.response?.status
+    const data    = err.response?.data
+    // Pull the most useful message out of Ingram's error shapes
+    const errMsg  = data?.fault?.faultstring
+      || data?.errors?.[0]?.message
+      || data?.message
+      || data?.error_description
+      || JSON.stringify(data)
+      || err.message
+    console.error('[ingram_xi] testConnection error:', status, errMsg, JSON.stringify(data))
     return {
       ok: false,
-      message: err.response?.status
-        ? `HTTP ${err.response.status}: ${data?.fault?.faultstring || data?.message || err.message}`
-        : err.message,
-      details: { error_data: data }
+      message: status ? `HTTP ${status}: ${errMsg}` : err.message,
+      details: { status, error_data: data }
     }
   }
 }
@@ -134,36 +165,45 @@ async function testConnection(creds, config = {}) {
 async function* fetchOrders(creds, config, since = null) {
   const token = await getToken(creds, config)
   const client = buildClient(token, creds, config)
-  // Ingram /orders search endpoint
+
+  // Ingram Xvantage XI — order search endpoint: GET /resellers/v6.1/orders/ordersearch
+  // Date format: YYYY-MM-DD for orderDateBT (begin) / orderDateET (end)
   const params = {
-    'customer-number': creds.customer_number,
-    'page-size': 100,
-    'page-number': 1,
+    pageSize:   100,
+    pageNumber: 1,
   }
-  if (since) params['created-date-begin'] = new Date(since).toISOString().split('T')[0]
+  if (since) params.orderDateBT = new Date(since).toISOString().split('T')[0]
 
   let pageNumber = 1
   while (true) {
-    params['page-number'] = pageNumber
-    const res = await client.get('/orders', { params })
+    params.pageNumber = pageNumber
+    const res = await client.get('/orders/ordersearch', { params })
     const orders = res.data?.orders || []
     if (!orders.length) break
 
     for (const o of orders) {
-      yield normalizeOrder(o, creds)
+      // Fetch full order detail to get line items (summary search doesn't include them)
+      try {
+        const detail = await client.get(`/orders/${o.ingramOrderNumber}`)
+        yield normalizeOrder(detail.data, creds)
+      } catch {
+        // Fall back to summary data if detail fetch fails
+        yield normalizeOrder(o, creds)
+      }
     }
 
     const total = res.data?.recordsFound || 0
-    if (pageNumber * params['page-size'] >= total) break
+    if (pageNumber * 100 >= total) break
     pageNumber++
-    if (pageNumber > 100) break  // safety
+    if (pageNumber > 100) break  // safety cap
   }
 }
 
-// ─── fetchOrder — single order by ID ─────────────────────────────────────────
+// ─── fetchOrder — single order by Ingram order number ────────────────────────
 async function fetchOrder(creds, config, orderId) {
   const token = await getToken(creds, config)
   const client = buildClient(token, creds, config)
+  // GET /resellers/v6.1/orders/{ingramOrderNumber}
   const res = await client.get(`/orders/${orderId}`)
   return normalizeOrder(res.data, creds)
 }

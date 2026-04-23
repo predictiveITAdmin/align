@@ -10,13 +10,13 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 
 **Distributor status:**
 - TD Synnex eSolutions — ✅ Active (PO-driven SOAP/XML sync running)
-- Ingram Micro Xvantage XI — 🟡 Adapter built, awaiting production credentials
+- Ingram Micro Xvantage XI — 🟡 App approved + Production, needs "Order Management v6" product added in API Catalog (currently only v7 selected)
 - Dell Premier — 🔲 Adapter built, awaiting Client ID + Secret from Dell account team
 - Amazon Business — ✅ CSV import active
 - Provantage — ✅ Manual entry active
 
 **Next priorities:**
-1. Obtain Ingram Micro Xvantage production credentials (currently sandbox → HTTP 500)
+1. Ingram Micro: add "Order Management v6" to API Catalog in Ingram portal, then test connection
 2. Obtain Dell Premier OAuth2 credentials from Dell Premier portal
 3. Phase E: QuickBooks Online integration (receipt confirmation → QBO PO update)
 4. Implement Parent/Child client Locations tab (spec in `docs/product-spec.md`)

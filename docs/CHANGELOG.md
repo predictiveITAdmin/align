@@ -18,6 +18,34 @@ implements it.
 
 ---
 
+## 2026-04-22 — UI: OppDetail + OrderDetail slide-overs extracted; ClientDetail row-click bug fix; search depth
+
+- **OppDetailSlideOver extracted** to `client/src/components/OppDetailSlideOver.jsx` — reusable
+  component (props: `oppId`, `onClose`). Removed 130-line inline `OppDetail` function from
+  `Opportunities.jsx`; replaced with import.
+- **OrderDetailSlideOver extracted** to `client/src/components/OrderDetailSlideOver.jsx` — includes
+  POMapperModal, all status helpers. `Orders.jsx` now imports instead of inlining.
+- **ClientDetail Opportunities tab — row click bug fixed** — rows had no `onClick` handler; added
+  `selectedOppId` state, cursor-pointer styling, and renders `<OppDetailSlideOver>`. Also added
+  inline search box filtering by title/stage/owner/PO.
+- **ClientDetail Orders tab — row click bug fixed** — same pattern: `selectedOrderId` state +
+  `<OrderDetailSlideOver>` with `onRefresh` callback.
+- **Backend search extended** — `GET /api/opportunities?search=` now matches: `o.title`,
+  `c.name`, `o.po_numbers[]` (array unnest), linked `qt.title`, `qt.quote_number::text`.
+  Enables "11628" → finds "PH - Linda PC (#PITQ11628)" and all linked quotes.
+
+## 2026-04-22 — Ingram Micro: form labels corrected; Secret Key field added
+
+- **REQUIRED_FIELDS labels corrected** in `src/services/distributors/ingram_xi.js` to match
+  the Ingram developer portal exactly: "Consumer Key" → **"Client ID"**, "Consumer Secret" →
+  **"Client Secret"**. Help text updated to reference exact portal locations.
+- **Secret Key field added** — new `webhook_secret` field (label: "Secret Key") for webhook
+  signature verification. Matches the "Secret Key" shown in the Ingram portal app detail page.
+- **API_VERSION set to `v6`** — "Order Management v6" product (list/search endpoint
+  `GET /resellers/v6/orders/ordersearch`) is the correct product for order sync. "Async Order
+  Management v7" is single-order lookup only (requires `orderNumber`; no list capability).
+  Adapter now defaults to v6 with automatic fallback probe to v6.1 on 401.
+
 ## 2026-04-22 — Opportunities UI: filters, columns, detail card
 
 Major overhaul of the `/opportunities` global page and detail slide-over:
