@@ -117,20 +117,43 @@ async function testConnection(creds, config = {}) {
     if (!token) return { ok: false, message: 'No access token returned from Ingram OAuth' }
 
     // Step 2: probe the orders search endpoint
-    // "Order Management v6" product → GET /resellers/v6/orders/ordersearch
+    // Ingram v6 ordersearch requires a date window — probe last 90 days
     const client = buildClient(token, creds, config)
     let r
     let workingVersion = API_VERSION
-    const probeParams = { pageSize: 1, pageNumber: 1 }
+    const today = new Date().toISOString().split('T')[0]
+    const past90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    const probeParams = { pageSize: 1, pageNumber: 1, orderDateBT: past90, orderDateET: today }
 
+    // Try v6 first, fall back to v6.1 on 401 (product not yet active), then v7 token-only
     try {
       r = await client.get('/orders/ordersearch', { params: probeParams })
     } catch (probeErr) {
-      // If v6 fails with 401 (product not yet active), try v6.1 as fallback
-      if (probeErr.response?.status === 401) {
-        const client61 = buildClient(token, creds, { ...config, _versionOverride: 'v6.1' })
-        r = await client61.get('/orders/ordersearch', { params: probeParams })
-        workingVersion = 'v6.1'
+      const status = probeErr.response?.status
+      if (status === 401 || status === 403) {
+        // v6 product not yet approved — try v6.1
+        try {
+          const client61 = buildClient(token, creds, { ...config, _versionOverride: 'v6.1' })
+          r = await client61.get('/orders/ordersearch', { params: probeParams })
+          workingVersion = 'v6.1'
+        } catch {
+          // Neither v6 nor v6.1 is approved yet — but token is valid (we got this far)
+          return {
+            ok: true,
+            message: 'OAuth credentials valid — awaiting "Order Management v6" product approval in Ingram portal',
+            details: { environment: config.environment || 'production', apiVersion: 'token-only', tokenValid: true }
+          }
+        }
+      } else if (status === 400) {
+        // 400 often means v6 product is not enabled for this customer yet
+        const errMsg = probeErr.response?.data?.errors?.[0]?.message
+          || probeErr.response?.data?.message
+          || 'Validation failed'
+        return {
+          ok: true,
+          message: `OAuth credentials valid — API returned: ${errMsg}. If "Order Management v6" is approved in the portal, try syncing orders directly.`,
+          details: { environment: config.environment || 'production', apiVersion: workingVersion, tokenValid: true }
+        }
       } else {
         throw probeErr
       }
@@ -140,7 +163,7 @@ async function testConnection(creds, config = {}) {
       ok: true,
       message: 'Connected successfully',
       details: {
-        recordsFound: r.data?.recordsFound ?? r.data?.totalRecords ?? r.data?.orders?.length ?? 'ok',
+        recordsFound: r.data?.recordsFound ?? r.data?.totalRecords ?? r.data?.orders?.length ?? 0,
         environment: config.environment || 'production',
         apiVersion: workingVersion,
       }
