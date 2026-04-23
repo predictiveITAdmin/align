@@ -127,14 +127,14 @@ async function testConnection(creds, config = {}) {
 
     // Try v6 first, fall back to v6.1 on 401 (product not yet active), then v7 token-only
     try {
-      r = await client.get('/orders/ordersearch', { params: probeParams })
+      r = await client.get('/orders/search', { params: probeParams })
     } catch (probeErr) {
       const status = probeErr.response?.status
       if (status === 401 || status === 403) {
         // v6 product not yet approved — try v6.1
         try {
           const client61 = buildClient(token, creds, { ...config, _versionOverride: 'v6.1' })
-          r = await client61.get('/orders/ordersearch', { params: probeParams })
+          r = await client61.get('/orders/search', { params: probeParams })
           workingVersion = 'v6.1'
         } catch {
           // Neither v6 nor v6.1 is approved yet — but token is valid (we got this far)
@@ -192,7 +192,8 @@ async function* fetchOrders(creds, config, since = null) {
   const token = await getToken(creds, config)
   const client = buildClient(token, creds, config)
 
-  // Ingram Xvantage XI — order search endpoint: GET /resellers/v6.1/orders/ordersearch
+  // Ingram Xvantage XI — order search endpoint: GET /resellers/v6/orders/search
+  // (NOT /orders/ordersearch — that was the wrong path; /orders/search is correct)
   // Date format: YYYY-MM-DD for orderDateBT (begin) / orderDateET (end)
   const params = {
     pageSize:   100,
@@ -203,7 +204,7 @@ async function* fetchOrders(creds, config, since = null) {
   let pageNumber = 1
   while (true) {
     params.pageNumber = pageNumber
-    const res = await client.get('/orders/ordersearch', { params })
+    const res = await client.get('/orders/search', { params })
     const orders = res.data?.orders || []
     if (!orders.length) break
 
