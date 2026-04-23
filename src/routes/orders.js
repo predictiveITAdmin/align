@@ -50,7 +50,9 @@ router.get('/', requireAuth, async (req, res) => {
     if (to_date)      { params.push(to_date);      q += ` AND o.order_date <= $${params.length}` }
 
     // Status: explicit status filter overrides open_only
-    if (status) {
+    if (status === 'in_transit') {
+      q += ` AND o.status IN ('shipped','partially_shipped')`
+    } else if (status) {
       params.push(status); q += ` AND o.status = $${params.length}`
     } else if (open_only !== '0') {
       // Default view: open orders only (exclude delivered + cancelled)
@@ -85,7 +87,8 @@ router.get('/stats', requireAuth, async (req, res) => {
         (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1) AS total,
         (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND match_status = 'unmapped') AS unmapped,
         (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND match_status = 'needs_review') AS needs_review,
-        (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND status IN ('submitted','confirmed','partially_shipped','shipped','out_for_delivery')) AS open,
+        (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND status NOT IN ('delivered','cancelled','returned')) AS open,
+        (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND status IN ('shipped','partially_shipped')) AS in_transit,
         (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND status = 'backordered') AS backordered,
         (SELECT count(*) FROM distributor_orders WHERE tenant_id = $1 AND status = 'delivered') AS delivered_total
     `, [req.tenant.id])

@@ -9,6 +9,7 @@ import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import QuoteLineItems from '../components/QuoteLineItems'
 import OppDetailSlideOver from '../components/OppDetailSlideOver'
+import OrderDetailSlideOver from '../components/OrderDetailSlideOver'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(val) {
@@ -285,6 +286,8 @@ export default function Opportunities() {
   const [search, setSearch]         = useState('')
   // statusFilter: 'open' | 'won' | 'lost' | 'all'
   const [statusFilter, setStatusFilter] = useState('open')
+  const [hasPOFilter, setHasPOFilter]         = useState(false)
+  const [hasOrdersFilter, setHasOrdersFilter] = useState(false)
 
   // Column-level filters
   const [colFilters, setColFilters] = useState({ status: '', stage: '', category: '' })
@@ -318,6 +321,7 @@ export default function Opportunities() {
 
   // Detail
   const [selectedId, setSelectedId] = useState(null)
+  const [selectedOrderId, setSelectedOrderId] = useState(null)
 
   function setColFilter(col, val) {
     setColFilters(prev => ({ ...prev, [col]: val }))
@@ -396,8 +400,10 @@ export default function Opportunities() {
       rows = rows.filter(o => inDateRange(o.created_date, dateFilters.create_date_preset, dateFilters.create_date_from, dateFilters.create_date_to))
     if (dateFilters.closed_date_preset || dateFilters.closed_date_from || dateFilters.closed_date_to)
       rows = rows.filter(o => inDateRange(o.closed_date, dateFilters.closed_date_preset, dateFilters.closed_date_from, dateFilters.closed_date_to))
+    if (hasPOFilter)     rows = rows.filter(o => (o.po_numbers?.length ?? 0) > 0)
+    if (hasOrdersFilter) rows = rows.filter(o => parseInt(o.order_count) > 0)
     return rows
-  }, [opps, statusFilter, colFilters, clientFilter, ownerFilter, dateFilters])
+  }, [opps, statusFilter, colFilters, clientFilter, ownerFilter, dateFilters, hasPOFilter, hasOrdersFilter])
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -444,6 +450,8 @@ export default function Opportunities() {
       create_date_preset: '', create_date_from: '', create_date_to: '',
       closed_date_preset: '', closed_date_from: '', closed_date_to: '',
     })
+    setHasPOFilter(false)
+    setHasOrdersFilter(false)
   }
 
   // Sortable + filterable column header
@@ -530,14 +538,16 @@ export default function Opportunities() {
           { label: 'Won / Implemented', value: stats.won,        icon: CheckCircle2,    color: 'text-green-600',   bg: 'bg-green-50',    filter: 'won',   onClick: () => { setStatusFilter('won');   setColFilter('status', '') } },
           { label: 'Lost / Not Ready',  value: stats.lost,       icon: X,               color: 'text-red-500',     bg: 'bg-red-50',      filter: 'lost',  onClick: () => { setStatusFilter('lost');  setColFilter('status', '') } },
           { label: 'All',               value: opps.length,      icon: SlidersHorizontal, color: 'text-gray-400', bg: 'bg-gray-100',    filter: 'all',   onClick: () => { setStatusFilter('all');   setColFilter('status', '') } },
-          { label: 'With PO Numbers',   value: stats.withPo,     icon: FileText,        color: 'text-blue-600',    bg: 'bg-blue-50' },
-          { label: 'With Orders',       value: stats.withOrders, icon: ShoppingCart,    color: 'text-green-600',   bg: 'bg-green-50' },
+          { label: 'With PO Numbers', value: stats.withPo, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50',
+            filter: 'hasPO', onClick: () => { setHasPOFilter(f => !f) } },
+          { label: 'With Orders', value: stats.withOrders, icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-50',
+            filter: 'hasOrders', onClick: () => { setHasOrdersFilter(f => !f) } },
           { label: 'Pipeline Value',    value: fmt(stats.totalValue), icon: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50' },
         ].map(tile => (
           <div key={tile.label} onClick={tile.onClick}
             className={`flex-1 min-w-[130px] bg-white rounded-xl border p-4 transition-colors
               ${tile.onClick ? 'cursor-pointer hover:border-primary-300' : ''}
-              ${tile.filter && statusFilter === tile.filter ? 'border-primary-400 ring-1 ring-primary-300' : 'border-gray-200'}
+              ${(tile.filter === 'hasPO' && hasPOFilter) || (tile.filter === 'hasOrders' && hasOrdersFilter) || (tile.filter && !['hasPO','hasOrders'].includes(tile.filter) && statusFilter === tile.filter) ? 'border-primary-400 ring-1 ring-primary-300' : 'border-gray-200'}
             `}>
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${tile.bg}`}>
               <tile.icon size={16} className={tile.color} />
@@ -789,7 +799,20 @@ export default function Opportunities() {
         )}
       </div>
 
-      {selectedId && <OppDetail oppId={selectedId} onClose={() => setSelectedId(null)} />}
+      {selectedId && (
+        <OppDetail
+          oppId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onOrderClick={id => { setSelectedId(null); setSelectedOrderId(id) }}
+        />
+      )}
+      {selectedOrderId && (
+        <OrderDetailSlideOver
+          orderId={selectedOrderId}
+          onClose={() => setSelectedOrderId(null)}
+          onRefresh={() => {}}
+        />
+      )}
     </div>
   )
 }

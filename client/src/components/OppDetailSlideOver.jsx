@@ -9,6 +9,7 @@
  *   onClose — called when user dismisses the slide-over
  */
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { X, ChevronDown, Loader2 } from 'lucide-react'
 import { api } from '../lib/api'
 import QuoteLineItems from './QuoteLineItems'
@@ -35,7 +36,7 @@ function statusPillClass(status) {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function OppDetailSlideOver({ oppId, onClose }) {
+export default function OppDetailSlideOver({ oppId, onClose, onOrderClick }) {
   const [opp, setOpp]             = useState(null)
   const [loading, setLoading]     = useState(true)
   const [openQuote, setOpenQuote] = useState(null)
@@ -67,7 +68,7 @@ export default function OppDetailSlideOver({ oppId, onClose }) {
                     {opp.status}
                   </span>
                 )}
-                {opp.client_name && <span className="text-xs text-gray-500">{opp.client_name}</span>}
+                {opp.client_name && opp.client_id ? <Link to={`/clients/${opp.client_id}`} onClick={onClose} className="text-xs text-blue-600 hover:underline">{opp.client_name}</Link> : opp.client_name && <span className="text-xs text-gray-500">{opp.client_name}</span>}
               </div>
             )}
           </div>
@@ -144,7 +145,7 @@ export default function OppDetailSlideOver({ oppId, onClose }) {
                 </div>
                 <div className="divide-y divide-gray-50 px-5">
                   {opp.orders.map(o => (
-                    <div key={o.id} className="py-3 flex items-start justify-between gap-3">
+                    <div key={o.id} className={`py-3 flex items-start justify-between gap-3 ${onOrderClick ? 'cursor-pointer hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors' : ''}`} onClick={() => onOrderClick?.(o.id)}>
                       <div>
                         <p className="text-sm font-medium text-gray-900">{o.supplier_order_number || o.id}</p>
                         <p className="text-xs text-gray-500">{o.supplier_name || o.adapter_key} · {fmtDate(o.order_date)}</p>

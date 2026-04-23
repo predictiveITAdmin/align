@@ -10,6 +10,7 @@
  *   onRefresh — called after a map/unmap action so the parent can reload its list
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import {
   X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle,
 } from 'lucide-react'
@@ -195,7 +196,7 @@ function POMapperModal({ order, onClose, onMapped }) {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function OrderDetailSlideOver({ orderId, onClose, onRefresh }) {
+export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOppClick }) {
   const [order, setOrder]     = useState(null)
   const [loading, setLoading] = useState(true)
   const [showMapper, setShowMapper] = useState(false)
@@ -273,11 +274,18 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh }) {
                 </>)}
                 {order.client_name && (<>
                   <span className="text-gray-500">Client</span>
-                  <span className="text-gray-900">{order.client_name}</span>
+                  <Link to={`/clients/${order.client_id}`} onClick={onClose} className="text-blue-600 hover:underline text-gray-900">
+                    {order.client_name}
+                  </Link>
                 </>)}
                 {order.opportunity_title && (<>
                   <span className="text-gray-500">Opportunity</span>
-                  <span className="text-gray-900">{order.opportunity_title}</span>
+                  <span
+                    className={order.opportunity_id && onOppClick ? 'text-blue-600 hover:underline cursor-pointer' : 'text-gray-900'}
+                    onClick={() => order.opportunity_id && onOppClick?.(order.opportunity_id)}
+                  >
+                    {order.opportunity_title}
+                  </span>
                 </>)}
                 {order.quote_number && (<>
                   <span className="text-gray-500">Quote #</span>

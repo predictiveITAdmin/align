@@ -2,9 +2,13 @@ import { Outlet, useMatch } from 'react-router-dom'
 import { useState } from 'react'
 import { Menu } from 'lucide-react'
 import Sidebar from './Sidebar'
+import OppDetailSlideOver from './OppDetailSlideOver'
+import OrderDetailSlideOver from './OrderDetailSlideOver'
 
 export default function Layout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [globalOppId, setGlobalOppId] = useState(null)
+  const [globalOrderId, setGlobalOrderId] = useState(null)
   const clientMatch = useMatch('/clients/:id')
   const isClientView = !!clientMatch
 
@@ -30,7 +34,12 @@ export default function Layout() {
         />
       )}
 
-      <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
+      <Sidebar
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
+        onOppClick={setGlobalOppId}
+        onOrderClick={setGlobalOrderId}
+      />
 
       <main className={`
         ${isClientView ? 'md:ml-48' : 'md:ml-56'}
@@ -39,6 +48,21 @@ export default function Layout() {
       `}>
         <Outlet />
       </main>
+
+      {globalOppId && (
+        <OppDetailSlideOver
+          oppId={globalOppId}
+          onClose={() => setGlobalOppId(null)}
+          onOrderClick={setGlobalOrderId}
+        />
+      )}
+      {globalOrderId && (
+        <OrderDetailSlideOver
+          orderId={globalOrderId}
+          onClose={() => setGlobalOrderId(null)}
+          onRefresh={() => {}}
+        />
+      )}
     </div>
   )
 }

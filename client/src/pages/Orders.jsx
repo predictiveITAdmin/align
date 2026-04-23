@@ -7,6 +7,7 @@ import {
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
 import OrderDetailSlideOver from '../components/OrderDetailSlideOver'
+import OppDetailSlideOver from '../components/OppDetailSlideOver'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DISTRIBUTORS = [
@@ -475,6 +476,103 @@ function OrderDetail({ orderId, tenantId, onClose, onRefresh }) {
   )
 }
 
+// ─── Date preset helpers ──────────────────────────────────────────────────────
+function datePresetRange(preset) {
+  const now = new Date()
+  const startOfWeek = (d) => { const x = new Date(d); x.setDate(d.getDate() - d.getDay()); x.setHours(0,0,0,0); return x }
+  const endOfWeek   = (d) => { const x = new Date(d); x.setDate(d.getDate() + (6 - d.getDay())); x.setHours(23,59,59,999); return x }
+  switch (preset) {
+    case 'this_week':  return { from: startOfWeek(now), to: endOfWeek(now) }
+    case 'last_week':  { const lw = new Date(now); lw.setDate(now.getDate()-7); return { from: startOfWeek(lw), to: endOfWeek(lw) } }
+    case 'this_month': { const f=new Date(now.getFullYear(),now.getMonth(),1); const t=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59); return {from:f,to:t} }
+    case 'last_month': { const f=new Date(now.getFullYear(),now.getMonth()-1,1); const t=new Date(now.getFullYear(),now.getMonth(),0,23,59,59); return {from:f,to:t} }
+    case 'next_month': { const f=new Date(now.getFullYear(),now.getMonth()+1,1); const t=new Date(now.getFullYear(),now.getMonth()+2,0,23,59,59); return {from:f,to:t} }
+    default: return null
+  }
+}
+
+function inDateRange(dateStr, preset, fromStr, toStr) {
+  if (!preset && !fromStr && !toStr) return true
+  if (!dateStr) return false
+  const d = new Date(dateStr)
+  if (preset && preset !== 'custom') {
+    const r = datePresetRange(preset)
+    if (!r) return true
+    return d >= r.from && d <= r.to
+  }
+  if (fromStr && d < new Date(fromStr)) return false
+  if (toStr && d > new Date(toStr + 'T23:59:59')) return false
+  return true
+}
+
+// ─── DateRangeFilter popover ──────────────────────────────────────────────────
+function DateRangeFilter({ label, preset, fromDate, toDate, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef()
+  const active = !!(preset || fromDate || toDate)
+
+  useEffect(() => {
+    function h(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const PRESETS = [
+    { label: 'This Week',  value: 'this_week' },
+    { label: 'Last Week',  value: 'last_week' },
+    { label: 'This Month', value: 'this_month' },
+    { label: 'Last Month', value: 'last_month' },
+    { label: 'Next Month', value: 'next_month' },
+  ]
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg transition-colors ${
+          active ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+        }`}
+      >
+        <span>{label}</span>
+        {active && (
+          <button className="ml-1 text-primary-500 hover:text-primary-700"
+            onClick={e => { e.stopPropagation(); onChange({ preset: '', from: '', to: '' }) }}>
+            ×
+          </button>
+        )}
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg p-3 min-w-[210px] left-0">
+          <div className="text-xs font-semibold text-gray-400 pb-1.5 mb-1.5 border-b border-gray-100">{label}</div>
+          {PRESETS.map(p => (
+            <button key={p.value}
+              onClick={() => { onChange({ preset: preset === p.value ? '' : p.value, from: '', to: '' }); setOpen(false) }}
+              className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-gray-50 ${preset === p.value ? 'text-primary-600 font-medium bg-primary-50' : 'text-gray-600'}`}>
+              {p.label}
+            </button>
+          ))}
+          <div className="border-t border-gray-100 mt-1.5 pt-1.5">
+            <div className="text-xs text-gray-400 mb-1">Custom range</div>
+            <div className="flex gap-1 items-center">
+              <input type="date" value={fromDate}
+                onChange={e => onChange({ preset: 'custom', from: e.target.value, to: toDate })}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 w-[105px] focus:outline-none focus:ring-1 focus:ring-primary-300" />
+              <span className="text-gray-300">–</span>
+              <input type="date" value={toDate}
+                onChange={e => onChange({ preset: 'custom', from: fromDate, to: e.target.value })}
+                className="text-xs border border-gray-200 rounded px-1.5 py-1 w-[105px] focus:outline-none focus:ring-1 focus:ring-primary-300" />
+            </div>
+          </div>
+          {active && (
+            <button onClick={() => { onChange({ preset: '', from: '', to: '' }); setOpen(false) }}
+              className="w-full mt-2 text-xs text-red-500 hover:text-red-700 text-left px-1">Clear filter</button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Orders page ─────────────────────────────────────────────────────────
 export default function Orders() {
   const [orders, setOrders]           = useState([])
@@ -492,8 +590,13 @@ export default function Orders() {
   // openOnly: true = default view (non-delivered); false = include delivered/cancelled history
   const [openOnly, setOpenOnly]       = useState(true)
 
+  // Date range filters (order date = server-side; delivery = client-side)
+  const [orderDateFilter, setOrderDateFilter] = useState({ preset: '', from: '', to: '' })
+  const [deliveryFilter, setDeliveryFilter]   = useState({ preset: '', from: '', to: '' })
+
   // UI state
   const [selectedOrderId, setSelectedOrderId] = useState(null)
+  const [selectedOppId, setSelectedOppId] = useState(null)
   const [mapOrderId, setMapOrderId]   = useState(null)
   const [matchingAll, setMatchingAll] = useState(false)
   const [syncing, setSyncing]         = useState(false)
@@ -517,13 +620,15 @@ export default function Orders() {
     if (matchFilter)  params.set('match_status', matchFilter)
     // open_only=0 loads full history (inc. delivered/cancelled); default is open only
     if (!openOnly)    params.set('open_only', '0')
+    if (orderDateFilter.from)   params.set('from_date', orderDateFilter.from)
+    if (orderDateFilter.to)     params.set('to_date', orderDateFilter.to)
     params.set('limit', '500')
 
     api.get(`/orders?${params}`)
       .then(r => { setOrders(r.data || []); setTotal(r.total || 0) })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
-  }, [search, distFilter, statusFilter, matchFilter, openOnly])
+  }, [search, distFilter, statusFilter, matchFilter, openOnly, orderDateFilter])
 
   useEffect(() => { loadStats() }, [loadStats])
 
@@ -569,6 +674,13 @@ export default function Orders() {
       setStatusFilter(prev => prev === value ? '' : value)
     }
   }
+
+  // Client-side delivery date filter (applied after server-side load)
+  const visibleOrders = deliveryFilter.preset || deliveryFilter.from || deliveryFilter.to
+    ? orders.filter(ord =>
+        ord.items?.some(item => inDateRange(item.expected_delivery, deliveryFilter.preset, deliveryFilter.from, deliveryFilter.to))
+      )
+    : orders
 
   return (
     <div className="max-w-[1400px]">
@@ -631,8 +743,10 @@ export default function Orders() {
         />
         <StatTile
           icon={Truck} label="In Transit"
-          value={stats?.open ?? (statsLoading ? '…' : '0')}
+          value={stats?.in_transit ?? (statsLoading ? '…' : '0')}
           color="bg-cyan-500"
+          active={statusFilter === 'in_transit'}
+          onClick={() => setStatFilter('status', 'in_transit')}
         />
         <StatTile
           icon={Clock} label="Backordered"
@@ -722,10 +836,28 @@ export default function Orders() {
           <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
         </div>
 
+        {/* Order Date filter */}
+        <DateRangeFilter
+          label="Order Date"
+          preset={orderDateFilter.preset}
+          fromDate={orderDateFilter.from}
+          toDate={orderDateFilter.to}
+          onChange={v => setOrderDateFilter({ preset: v.preset, from: v.from, to: v.to })}
+        />
+
+        {/* Expected Delivery filter */}
+        <DateRangeFilter
+          label="Est. Delivery"
+          preset={deliveryFilter.preset}
+          fromDate={deliveryFilter.from}
+          toDate={deliveryFilter.to}
+          onChange={v => setDeliveryFilter({ preset: v.preset, from: v.from, to: v.to })}
+        />
+
         {/* Clear filters */}
-        {(search || distFilter || statusFilter || matchFilter) && (
+        {(search || distFilter || statusFilter || matchFilter || orderDateFilter.preset || orderDateFilter.from || deliveryFilter.preset || deliveryFilter.from) && (
           <button
-            onClick={() => { setSearch(''); setDistFilter(''); setStatusFilter(''); setMatchFilter('') }}
+            onClick={() => { setSearch(''); setDistFilter(''); setStatusFilter(''); setMatchFilter(''); setOrderDateFilter({ preset: '', from: '', to: '' }); setDeliveryFilter({ preset: '', from: '', to: '' }) }}
             className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
           >
             <X size={13} /> Clear
@@ -733,7 +865,7 @@ export default function Orders() {
         )}
 
         <span className="ml-auto text-xs text-gray-400">
-          {total} order{total !== 1 ? 's' : ''}
+          {visibleOrders.length} order{visibleOrders.length !== 1 ? 's' : ''}
           {openOnly && <span className="text-gray-300"> · Jan 2021 – present</span>}
         </span>
       </div>
@@ -784,7 +916,7 @@ export default function Orders() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {orders.map(order => (
+              {visibleOrders.map(order => (
                 <tr
                   key={order.id}
                   className="hover:bg-gray-50/70 cursor-pointer transition-colors"
@@ -864,6 +996,13 @@ export default function Orders() {
           orderId={selectedOrderId}
           onClose={() => setSelectedOrderId(null)}
           onRefresh={() => { loadOrders(); loadStats() }}
+          onOppClick={id => { setSelectedOrderId(null); setSelectedOppId(id) }}
+        />
+      )}
+      {selectedOppId && (
+        <OppDetailSlideOver
+          oppId={selectedOppId}
+          onClose={() => setSelectedOppId(null)}
         />
       )}
 

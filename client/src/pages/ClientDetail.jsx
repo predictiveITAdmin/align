@@ -4578,6 +4578,7 @@ function ClientOpportunitiesTab({ clientId }) {
   const [showClosed, setShowClosed]   = useState(false)
   const [search, setSearch]           = useState('')
   const [selectedOppId, setSelectedOppId] = useState(null)
+  const [selectedOrderId, setSelectedOrderId] = useState(null)
 
   useEffect(() => {
     // include_closed=1 so the "All" toggle shows full client history;
@@ -4730,7 +4731,18 @@ function ClientOpportunitiesTab({ clientId }) {
       )}
 
       {selectedOppId && (
-        <OppDetailSlideOver oppId={selectedOppId} onClose={() => setSelectedOppId(null)} />
+        <OppDetailSlideOver
+          oppId={selectedOppId}
+          onClose={() => setSelectedOppId(null)}
+          onOrderClick={id => { setSelectedOppId(null); setSelectedOrderId(id) }}
+        />
+      )}
+      {selectedOrderId && (
+        <OrderDetailSlideOver
+          orderId={selectedOrderId}
+          onClose={() => setSelectedOrderId(null)}
+          onRefresh={() => {}}
+        />
       )}
     </div>
   )
@@ -4882,6 +4894,7 @@ function ClientOrdersTab({ clientId }) {
   const [orders, setOrders]             = useState([])
   const [loading, setLoading]           = useState(true)
   const [selectedOrderId, setSelectedOrderId] = useState(null)
+  const [selectedOppId, setSelectedOppId] = useState(null)
 
   function loadOrders() {
     api.get(`/orders?client_id=${clientId}&limit=100&open_only=0`)
@@ -4952,6 +4965,13 @@ function ClientOrdersTab({ clientId }) {
           orderId={selectedOrderId}
           onClose={() => setSelectedOrderId(null)}
           onRefresh={loadOrders}
+          onOppClick={id => { setSelectedOrderId(null); setSelectedOppId(id) }}
+        />
+      )}
+      {selectedOppId && (
+        <OppDetailSlideOver
+          oppId={selectedOppId}
+          onClose={() => setSelectedOppId(null)}
         />
       )}
     </div>
