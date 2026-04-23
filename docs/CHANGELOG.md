@@ -18,6 +18,72 @@ implements it.
 
 ---
 
+## 2026-04-23 — Order Management: richer order card + predictive PO mapping
+
+**Order detail card (`OrderDetailSlideOver`)**
+
+- **Created timestamp** now shown alongside the distributor's Order Date (uses
+  `distributor_orders.created_at` — the row-insert time from sync, which helps
+  diagnose sync lag vs. distributor-reported order date).
+- **Full ship-to address block** rendered from the existing `ship_to_address`
+  JSONB (line1/line2/city/state/postal/country) — was previously showing only
+  `ship_to_name`.
+- **Line item descriptions** no longer truncated; `break-words` + `whitespace-pre-wrap`.
+  `item.metadata.long_description` surfaced underneath the short description
+  when the adapter provides it (Ingram Micro does; TD Synnex eSolutions WSDL
+  only returns `productShortDescription`, so no long_description there).
+- **Tracking numbers are now clickable** links to carrier sites (UPS / FedEx /
+  USPS / DHL / OnTrac), with a Google-search fallback for unknown carriers.
+  When an adapter emits `item.metadata.tracking_numbers[]` (multi-shipment
+  support), every package is rendered; falls back to the single
+  `tracking_number` column otherwise.
+
+**Adapters — multi-tracking metadata (no schema change required)**
+
+- `tdsynnex_esolutions.js`: now stores the full `packages[].trackingNumber[]`
+  list into `item.metadata.tracking_numbers`. Previously only the first was
+  kept in the scalar `tracking_number` column.
+- `ingram_xi.js`: now stores full `shipmentDetails[].trackingNumber[]` into
+  `item.metadata.tracking_numbers` and maps `l.longDescription ||
+  l.productDescription` into `item.metadata.long_description`.
+- Rationale: avoids a migration for a rarely-used column while unlocking
+  multi-package tracking UI today. If adoption is high we can promote to a
+  first-class `tracking_numbers text[]` column later.
+
+**Predictive PO Mapper (`orderMatcher.getMatchSuggestions` + UI)**
+
+Replaced the old "search box + auto-match dry-run" with a 5-strategy
+predictive list, each row carrying `match_method`, human `match_reason`,
+and a `confidence` score. The UI groups by method into collapsible
+sections, so the user sees *why* each suggestion was picked.
+
+Strategies (priority order):
+
+1. **po_exact** (conf 100) — `order.po_number ∈ opp.po_numbers[]`
+2. **po_fuzzy** (conf 80)  — normalized PO equality (strip `PO-`, `#`, spaces)
+3. **part_overlap** (conf 50–90) — joins `distributor_order_items.mfg_part_number`
+   against `quote_items.mfg_part_number`; confidence scales with the ratio
+   `matched_count / total_order_parts`. Returns `matched_parts[]` for display.
+4. **date_proximity** (conf 30–70) — closed opportunities where
+   `opp.closed_date` is within ±30 days of `order.order_date`; confidence
+   decays linearly with day-distance. Reason line shows "Closed N days
+   before/after order date".
+5. **client_name** (conf 30–60) — ship_to_name fuzzy-matches a client, then
+   returns that client's recent opps (up to 6).
+
+**Search box** now covers `opp.title`, `client.name`, `opp.po_numbers[]`,
+`quote.title`, and `quote.quote_number` (so typing a quote # finds the linked
+opp). In search mode, the predictive groups are hidden and only search
+results render — keeps the UI focused.
+
+**API shape change** — `GET /api/orders/:id/match-suggestions` now returns
+richer rows (still a flat array, backward-compatible). New fields per row:
+`match_method`, `match_reason`, `confidence`, `closed_date`, `created_date`,
+`expected_close`, and for `part_overlap` rows: `matched_parts[]`,
+`match_count`, `total_parts`. Front-end groups by `match_method`.
+
+---
+
 ## 2026-04-22 — UI: OppDetail + OrderDetail slide-overs extracted; ClientDetail row-click bug fix; search depth
 
 - **OppDetailSlideOver extracted** to `client/src/components/OppDetailSlideOver.jsx` — reusable

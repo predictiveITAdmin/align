@@ -190,7 +190,12 @@ function normalizeOrder(poNo, customerNumber, raw) {
       ship_date:            item.shipDatetime ? new Date(item.shipDatetime).toISOString() : null,
       expected_delivery:    item.eta ? new Date(item.eta).toISOString() : null,
       serial_numbers:       [],
-      metadata:             { synnex_sku: item.synnexSku, order_type: item.orderType, status: item.status },
+      metadata:             {
+        synnex_sku:        item.synnexSku,
+        order_type:        item.orderType,
+        status:            item.status,
+        tracking_numbers:  trackingNumbers,            // all packages, UI renders each
+      },
     }
   })
 

@@ -9,10 +9,10 @@
  *   onClose   — called when user dismisses the slide-over
  *   onRefresh — called after a map/unmap action so the parent can reload its list
  */
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle,
+  X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle, ExternalLink,
 } from 'lucide-react'
 import { api } from '../lib/api'
 
@@ -28,6 +28,29 @@ function fmtDate(d) {
 function fmtTs(d) {
   if (!d) return '—'
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+// Build a carrier tracking URL for the common US carriers; fall back to a
+// Google lookup so the number is always clickable even for unknown carriers.
+function trackingUrl(carrier, tracking) {
+  if (!tracking) return null
+  const c = (carrier || '').toUpperCase()
+  const t = encodeURIComponent(tracking)
+  if (c.includes('UPS'))    return `https://www.ups.com/track?tracknum=${t}`
+  if (c.includes('FEDEX'))  return `https://www.fedex.com/fedextrack/?tracknumbers=${t}`
+  if (c.includes('USPS'))   return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${t}`
+  if (c.includes('DHL'))    return `https://www.dhl.com/en/express/tracking.html?AWB=${t}`
+  if (c.includes('ONTRAC')) return `https://www.ontrac.com/tracking.asp?tracking=${t}`
+  return `https://www.google.com/search?q=${encodeURIComponent(tracking + ' tracking')}`
+}
+
+function formatAddress(addr) {
+  if (!addr || typeof addr !== 'object') return null
+  const line1 = [addr.line1, addr.line2].filter(Boolean).join(' ')
+  const cityLine = [addr.city, addr.state].filter(Boolean).join(', ')
+  const cityZip = [cityLine, addr.postal].filter(Boolean).join(' ')
+  const lines = [line1, cityZip, addr.country].filter(Boolean)
+  return lines.length ? lines : null
 }
 
 const DISTRIBUTOR_LABELS = {
@@ -69,6 +92,72 @@ function StatusPill({ status, type = 'order' }) {
 }
 
 // ─── PO Mapper Modal ──────────────────────────────────────────────────────────
+// Predictive groups (server-assigned match_method) → section labels/order.
+const GROUP_META = [
+  { key: 'po_exact',       label: 'Exact PO match',          tint: 'green'  },
+  { key: 'po_fuzzy',       label: 'Similar PO',              tint: 'green'  },
+  { key: 'part_overlap',   label: 'Part numbers match',      tint: 'indigo' },
+  { key: 'date_proximity', label: 'Closed near order date',  tint: 'blue'   },
+  { key: 'client_name',    label: 'Same client',             tint: 'gray'   },
+]
+const GROUP_TINT = {
+  green:  'bg-green-50  text-green-700  border-green-200',
+  indigo: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  blue:   'bg-blue-50   text-blue-700   border-blue-200',
+  gray:   'bg-gray-50   text-gray-600   border-gray-200',
+  yellow: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+}
+
+function ConfidencePill({ confidence }) {
+  if (confidence == null) return null
+  const cls = confidence >= 90 ? 'bg-green-100  text-green-700'
+           : confidence >= 70 ? 'bg-blue-100   text-blue-700'
+           : confidence >= 50 ? 'bg-yellow-100 text-yellow-700'
+                              : 'bg-gray-100   text-gray-600'
+  return <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${cls}`}>{confidence}%</span>
+}
+
+function SuggestionRow({ opp, selected, onSelect }) {
+  const tint = GROUP_META.find(g => g.key === opp.match_method)?.tint || 'gray'
+  return (
+    <button
+      onClick={() => onSelect(opp)}
+      className={`w-full text-left px-3 py-2.5 rounded-lg mb-1 border transition-all
+        ${selected ? 'border-primary-400 bg-primary-50' : 'border-gray-100 hover:border-gray-300 hover:bg-gray-50'}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-gray-900 truncate">{opp.title}</p>
+          <p className="text-xs text-gray-500 truncate">{opp.client_name || '—'}</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
+            {opp.match_reason && (
+              <span className={`text-[11px] px-1.5 py-0.5 rounded border ${GROUP_TINT[tint]}`}>
+                {opp.match_reason}
+              </span>
+            )}
+            {opp.stage && <span className="text-[11px] text-gray-500">{opp.stage}</span>}
+            {opp.closed_date && (
+              <span className="text-[11px] text-gray-500">Closed {fmtDate(opp.closed_date)}</span>
+            )}
+            {!opp.closed_date && opp.created_date && (
+              <span className="text-[11px] text-gray-500">Created {fmtDate(opp.created_date)}</span>
+            )}
+          </div>
+          {opp.po_numbers?.length > 0 && (
+            <p className="text-xs text-gray-400 font-mono mt-0.5">
+              PO: {opp.po_numbers.slice(0, 3).join(', ')}{opp.po_numbers.length > 3 ? '…' : ''}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <ConfidencePill confidence={opp.confidence} />
+          {opp.amount != null && <span className="text-xs text-gray-600">{fmt(opp.amount)}</span>}
+        </div>
+      </div>
+    </button>
+  )
+}
+
 function POMapperModal({ order, onClose, onMapped }) {
   const [search, setSearch]           = useState('')
   const [suggestions, setSuggestions] = useState([])
@@ -98,9 +187,23 @@ function POMapperModal({ order, onClose, onMapped }) {
   }, [loadSuggestions])
 
   useEffect(() => {
-    const t = setTimeout(() => { if (search !== undefined) loadSuggestions(search) }, 350)
+    const t = setTimeout(() => { loadSuggestions(search) }, 350)
     return () => clearTimeout(t)
   }, [search, loadSuggestions])
+
+  // Group suggestions by match_method (preserving server order within each group)
+  const grouped = useMemo(() => {
+    const map = new Map()
+    for (const s of suggestions) {
+      const key = s.match_method || 'other'
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(s)
+    }
+    return map
+  }, [suggestions])
+
+  const isSearchMode = search.trim().length > 0
+  const searchResults = grouped.get('search') || []
 
   async function confirmMap() {
     if (!selected) return
@@ -118,7 +221,7 @@ function POMapperModal({ order, onClose, onMapped }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between p-5 border-b border-gray-100">
           <div>
             <h2 className="text-base font-semibold text-gray-900">Map to Opportunity</h2>
@@ -135,50 +238,75 @@ function POMapperModal({ order, onClose, onMapped }) {
           <div className="relative">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search by opportunity name, client, or PO…"
+              placeholder="Search any opportunity by name, client, PO, or quote #…"
               className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400" />
           </div>
+          {!isSearchMode && (
+            <p className="text-[11px] text-gray-400 mt-2">
+              Predictive matches shown below. Start typing to search any opportunity instead.
+            </p>
+          )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto p-3">
           {loading && (
             <div className="flex items-center justify-center py-8 text-gray-400">
               <Loader2 size={20} className="animate-spin mr-2" />
               <span className="text-sm">Finding matches…</span>
             </div>
           )}
-          {!loading && suggestions.length === 0 && (
-            <div className="text-center py-8 text-gray-400">
-              <Inbox size={28} className="mx-auto mb-2 opacity-40" />
-              <p className="text-sm">{search ? 'No matching opportunities found' : 'No suggestions found'}</p>
-              <p className="text-xs mt-1">Try searching by client name or PO number</p>
-            </div>
+
+          {!loading && isSearchMode && (
+            <>
+              {searchResults.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <Inbox size={28} className="mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No matches for "{search.trim()}"</p>
+                  <p className="text-xs mt-1">Try a client name, PO, or quote number</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                    Search results ({searchResults.length})
+                  </p>
+                  {searchResults.map(opp => (
+                    <SuggestionRow key={opp.id} opp={opp}
+                      selected={selected?.id === opp.id}
+                      onSelect={o => setSelected(selected?.id === o.id ? null : o)} />
+                  ))}
+                </>
+              )}
+            </>
           )}
-          {!loading && suggestions.map(opp => (
-            <button key={opp.id} onClick={() => setSelected(selected?.id === opp.id ? null : opp)}
-              className={`w-full text-left px-3 py-2.5 rounded-lg mb-1 border transition-all
-                ${selected?.id === opp.id ? 'border-primary-400 bg-primary-50' : 'border-gray-100 hover:border-gray-300 hover:bg-gray-50'}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{opp.title}</p>
-                  <p className="text-xs text-gray-500 truncate">{opp.client_name}</p>
-                  {opp.po_numbers?.length > 0 && (
-                    <p className="text-xs text-gray-400 font-mono mt-0.5">
-                      POs: {opp.po_numbers.slice(0, 3).join(', ')}{opp.po_numbers.length > 3 ? '…' : ''}
-                    </p>
-                  )}
+
+          {!loading && !isSearchMode && (
+            <>
+              {suggestions.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <Inbox size={28} className="mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No predictive matches found</p>
+                  <p className="text-xs mt-1">Type above to search any opportunity</p>
                 </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  {opp.confidence != null && (
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${opp.confidence >= 80 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                      {opp.confidence}% match
-                    </span>
-                  )}
-                  {opp.amount != null && <span className="text-xs text-gray-600">{fmt(opp.amount)}</span>}
-                </div>
-              </div>
-            </button>
-          ))}
+              ) : (
+                GROUP_META.map(g => {
+                  const rows = grouped.get(g.key) || []
+                  if (!rows.length) return null
+                  return (
+                    <div key={g.key} className="mb-3">
+                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 px-1">
+                        {g.label} <span className="text-gray-400 font-normal">· {rows.length}</span>
+                      </p>
+                      {rows.map(opp => (
+                        <SuggestionRow key={opp.id} opp={opp}
+                          selected={selected?.id === opp.id}
+                          onSelect={o => setSelected(selected?.id === o.id ? null : o)} />
+                      ))}
+                    </div>
+                  )
+                })
+              )}
+            </>
+          )}
         </div>
 
         {error && <p className="px-5 py-2 text-sm text-red-600 bg-red-50 border-t border-red-100">{error}</p>}
@@ -257,24 +385,24 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                 <StatusPill status={order.status} />
                 <StatusPill status={order.match_status} type="match" />
               </div>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
                 {order.po_number && (<>
                   <span className="text-gray-500">PO Number</span>
                   <span className="font-mono font-medium text-gray-900">{order.po_number}</span>
                 </>)}
                 <span className="text-gray-500">Order Date</span>
                 <span className="text-gray-900">{fmtDate(order.order_date)}</span>
+                {order.created_at && (<>
+                  <span className="text-gray-500">Created</span>
+                  <span className="text-gray-900">{fmtTs(order.created_at)}</span>
+                </>)}
                 {order.total != null && (<>
                   <span className="text-gray-500">Total</span>
                   <span className="font-medium text-gray-900">{fmt(order.total)}</span>
                 </>)}
-                {order.ship_to_name && (<>
-                  <span className="text-gray-500">Ship To</span>
-                  <span className="text-gray-900">{order.ship_to_name}</span>
-                </>)}
                 {order.client_name && (<>
                   <span className="text-gray-500">Client</span>
-                  <Link to={`/clients/${order.client_id}`} onClick={onClose} className="text-blue-600 hover:underline text-gray-900">
+                  <Link to={`/clients/${order.client_id}`} onClick={onClose} className="text-blue-600 hover:underline">
                     {order.client_name}
                   </Link>
                 </>)}
@@ -290,6 +418,15 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                 {order.quote_number && (<>
                   <span className="text-gray-500">Quote #</span>
                   <span className="text-gray-900">{order.quote_number}</span>
+                </>)}
+                {(order.ship_to_name || order.ship_to_address) && (<>
+                  <span className="text-gray-500">Ship To</span>
+                  <span className="text-gray-900">
+                    {order.ship_to_name && <span className="block font-medium">{order.ship_to_name}</span>}
+                    {formatAddress(order.ship_to_address)?.map((line, i) => (
+                      <span key={i} className="block text-gray-700">{line}</span>
+                    ))}
+                  </span>
                 </>)}
               </div>
               {/* Action buttons */}
@@ -322,30 +459,56 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                   Line Items ({order.items.length})
                 </h3>
                 <div className="space-y-3">
-                  {order.items.map((item, i) => (
-                    <div key={item.id || i} className="rounded-lg border border-gray-100 p-3 text-sm">
-                      <div className="flex justify-between gap-2">
-                        <div className="min-w-0">
-                          {item.mfg_part_number && <p className="font-mono text-xs text-gray-500 mb-0.5">{item.mfg_part_number}</p>}
-                          <p className="text-gray-900 font-medium truncate">{item.description || '—'}</p>
-                          {item.manufacturer && <p className="text-xs text-gray-500">{item.manufacturer}</p>}
+                  {order.items.map((item, i) => {
+                    // Prefer metadata.tracking_numbers[] (populated by adapters when
+                    // an order line has multiple shipments). Fall back to the
+                    // single tracking_number column for older rows.
+                    const extra = Array.isArray(item.metadata?.tracking_numbers) ? item.metadata.tracking_numbers : []
+                    const trackingList = extra.length ? extra : (item.tracking_number ? [item.tracking_number] : [])
+                    const longDesc = item.metadata?.long_description
+                    return (
+                      <div key={item.id || i} className="rounded-lg border border-gray-100 p-3 text-sm">
+                        <div className="flex justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            {item.mfg_part_number && <p className="font-mono text-xs text-gray-500 mb-0.5">{item.mfg_part_number}</p>}
+                            <p className="text-gray-900 font-medium break-words">{item.description || '—'}</p>
+                            {longDesc && longDesc !== item.description && (
+                              <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{longDesc}</p>
+                            )}
+                            {item.manufacturer && <p className="text-xs text-gray-500 mt-0.5">{item.manufacturer}</p>}
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs text-gray-500">Ord: {item.quantity_ordered}</p>
+                            {item.quantity_shipped > 0 && <p className="text-xs text-green-600">Ship: {item.quantity_shipped}</p>}
+                            {item.quantity_backordered > 0 && <p className="text-xs text-orange-600">B/O: {item.quantity_backordered}</p>}
+                            {item.quantity_cancelled > 0 && <p className="text-xs text-red-600">Can: {item.quantity_cancelled}</p>}
+                          </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs text-gray-500">Ord: {item.quantity_ordered}</p>
-                          {item.quantity_shipped > 0 && <p className="text-xs text-green-600">Ship: {item.quantity_shipped}</p>}
-                          {item.quantity_backordered > 0 && <p className="text-xs text-orange-600">B/O: {item.quantity_backordered}</p>}
-                        </div>
+                        {(trackingList.length > 0 || item.carrier || item.ship_date || item.expected_delivery) && (
+                          <div className="mt-2 pt-2 border-t border-gray-100 space-y-1 text-xs text-gray-500">
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              {item.carrier && <span>📦 {item.carrier}</span>}
+                              {item.ship_date && <span>Shipped: {fmtDate(item.ship_date)}</span>}
+                              {item.expected_delivery && <span className="text-green-600">Expected: {fmtDate(item.expected_delivery)}</span>}
+                            </div>
+                            {trackingList.length > 0 && (
+                              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                                {trackingList.map((t, j) => {
+                                  const url = trackingUrl(item.carrier, t)
+                                  return (
+                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer"
+                                      className="font-mono text-blue-600 hover:underline inline-flex items-center gap-1">
+                                      {t}<ExternalLink size={10} />
+                                    </a>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {(item.tracking_number || item.carrier) && (
-                        <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                          {item.carrier && <span>📦 {item.carrier}</span>}
-                          {item.tracking_number && <span className="font-mono">{item.tracking_number}</span>}
-                          {item.ship_date && <span>Shipped: {fmtDate(item.ship_date)}</span>}
-                          {item.expected_delivery && <span className="text-green-600">Expected: {fmtDate(item.expected_delivery)}</span>}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
