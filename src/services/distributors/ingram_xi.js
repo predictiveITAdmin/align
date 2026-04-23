@@ -32,11 +32,14 @@ const REQUIRED_FIELDS = [
     help: 'Your Ingram Micro reseller account number — visible as the numeric prefix in your app name (e.g. 70-797941)' },
   { name: 'country_code',    label: 'Country Code',      type: 'text',     secret: false,
     help: 'Default "US"', default: 'US' },
+  { name: 'environment',     label: 'Environment',       type: 'select',   secret: false,
+    options: ['production', 'sandbox'], default: 'production',
+    help: 'Use "production" for live orders. "sandbox" uses the /sandbox path prefix on the same Ingram host.' },
 ]
 
 const DEFAULTS = {
   base_url: PROD_BASE,
-  environment: 'sandbox',
+  environment: 'production',
 }
 
 // ─── Normalize Ingram status → our enum ──────────────────────────────────────

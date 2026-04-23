@@ -8,7 +8,6 @@ import {
 import { useState } from 'react'
 import { cn } from '../lib/cn'
 import { useAuth } from '../hooks/useAuth'
-import GlobalSearch from './GlobalSearch'
 
 // ─── Global nav items (Assessments/Recommendations/Roadmap/Budget/EOS live in client sidebar) ──
 const globalNavItems = [
@@ -64,7 +63,7 @@ const clientNavItems = [
   },
 ]
 
-export default function Sidebar({ mobileOpen = false, onMobileClose, onOppClick, onOrderClick }) {
+export default function Sidebar({ mobileOpen = false, onMobileClose, onSearchOpen }) {
   const [collapsed, setCollapsed]   = useState(false)
   const [openGroups, setOpenGroups] = useState({ assets: true, orders: true, procurement: true, 'client-assets': true })
   const { user, logout } = useAuth()
@@ -106,13 +105,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose, onOppClick,
             </div>
           )}
         </div>
-
-        {/* Global Search */}
-        {!collapsed && (
-          <div className="px-2 py-1.5 border-b border-white/10 shrink-0">
-            <GlobalSearch onOppClick={onOppClick} onOrderClick={onOrderClick} />
-          </div>
-        )}
 
         {/* Back to clients */}
         {!collapsed && (
@@ -227,13 +219,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose, onOppClick,
           </div>
         )}
       </div>
-
-      {/* Global Search */}
-      {!collapsed && (
-        <div className="px-2 py-1.5 border-b border-white/10 shrink-0">
-          <GlobalSearch onOppClick={onOppClick} onOrderClick={onOrderClick} />
-        </div>
-      )}
 
       {/* Nav */}
       <nav className="flex-1 py-2 overflow-y-auto">

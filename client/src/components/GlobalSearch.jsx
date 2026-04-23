@@ -1,6 +1,14 @@
 /**
- * GlobalSearch — ⌘K / Ctrl+K command palette search
- * Props: onOppClick(id), onOrderClick(id)
+ * GlobalSearch — controlled command-palette search modal
+ *
+ * Props:
+ *   open         — boolean, controlled by parent (Layout)
+ *   onClose      — () => void
+ *   onOppClick   — (id) => void — parent opens OppDetailSlideOver
+ *   onOrderClick — (id) => void — parent opens OrderDetailSlideOver
+ *
+ * Keyboard: press "/" anywhere (when not in an input) to open.
+ * Escape to close.
  */
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -25,6 +33,7 @@ const STATUS_COLORS = {
 }
 
 function Pill({ label }) {
+  if (!label) return null
   const cls = STATUS_COLORS[label] || 'bg-gray-100 text-gray-500'
   return <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium ${cls}`}>{label}</span>
 }
@@ -37,8 +46,7 @@ function SecHeader({ icon: Icon, label, count, color }) {
   )
 }
 
-export default function GlobalSearch({ onOppClick, onOrderClick }) {
-  const [open, setOpen]       = useState(false)
+export default function GlobalSearch({ open, onClose, onOppClick, onOrderClick }) {
   const [query, setQuery]     = useState('')
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -46,99 +54,113 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
   const inputRef = useRef()
   const navigate = useNavigate()
 
-  // ⌘K / Ctrl+K open
+  // "/" key opens search (when not already in an input field)
   useEffect(() => {
     function h(e) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        // Don't open if already in an input (except our own)
-        const tag = document.activeElement?.tagName
-        if (tag === 'INPUT' || tag === 'TEXTAREA') {
-          if (document.activeElement !== inputRef.current) return
-        }
-        setOpen(o => !o)
+      if (open) {
+        if (e.key === 'Escape') { e.preventDefault(); onClose() }
+        return
       }
-      if (e.key === 'Escape') setOpen(false)
+      // Press "/" to open — but not when user is typing in an input/textarea/select
+      if (e.key === '/') {
+        const tag = document.activeElement?.tagName?.toLowerCase()
+        const isEditable = document.activeElement?.isContentEditable
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || isEditable) return
+        e.preventDefault()
+        onClose()  // this won't do anything; the trigger is the parent button
+        // Signal to parent to open — handled via the "/" shortcut being listened to in Layout
+      }
     }
     document.addEventListener('keydown', h)
     return () => document.removeEventListener('keydown', h)
-  }, [])
+  }, [open, onClose])
 
-  // Focus on open
+  // Focus + reset when opened
   useEffect(() => {
-    if (open) { setQuery(''); setResults(null); setCursor(0); setTimeout(() => inputRef.current?.focus(), 50) }
+    if (open) {
+      setQuery('')
+      setResults(null)
+      setCursor(0)
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
   }, [open])
 
   // Debounced search
   useEffect(() => {
-    if (!query || query.length < 2) { setResults(null); return }
+    if (!open || !query || query.length < 2) { setResults(null); return }
     setLoading(true)
     const t = setTimeout(async () => {
       try {
         const r = await api.get(`/search?q=${encodeURIComponent(query)}`)
-        setResults(r); setCursor(0)
+        setResults(r)
+        setCursor(0)
       } catch { setResults(null) }
       finally { setLoading(false) }
     }, 200)
     return () => clearTimeout(t)
-  }, [query])
+  }, [query, open])
 
-  // Build flat item list for keyboard nav
-  const flat = buildFlat(results, { onOppClick, onOrderClick, navigate, close: () => setOpen(false) })
+  // Flat list for keyboard nav
+  const flat = buildFlat(results, { onOppClick, onOrderClick, navigate, close: onClose })
 
   function handleKeyDown(e) {
     if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(c + 1, flat.length - 1)) }
     if (e.key === 'ArrowUp')   { e.preventDefault(); setCursor(c => Math.max(c - 1, 0)) }
-    if (e.key === 'Enter' && flat[cursor]) { flat[cursor].action(); setOpen(false) }
+    if (e.key === 'Escape')    { onClose() }
+    if (e.key === 'Enter' && flat[cursor]) { flat[cursor].action() }
   }
 
-  // Trigger button (shown in sidebar)
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)}
-        className="flex items-center gap-2 w-full px-3 py-2 text-left rounded-lg text-sidebar-text/50 hover:text-sidebar-text hover:bg-white/5 transition-colors"
-        title="Global Search (⌘K)">
-        <Search size={14} className="shrink-0" />
-        <span className="text-xs flex-1">Search…</span>
-        <kbd className="text-[9px] opacity-40 font-mono">⌘K</kbd>
-      </button>
-    )
-  }
+  if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/50 flex items-start justify-center pt-[8vh] px-4"
-      onClick={() => setOpen(false)}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[75vh]"
-        onClick={e => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[80] bg-black/40 flex items-start justify-center pt-[8vh] px-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[75vh]"
+        onClick={e => e.stopPropagation()}
+      >
         {/* Input row */}
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100">
           <Search size={16} className="text-gray-400 shrink-0" />
-          <input ref={inputRef} value={query}
+          <input
+            ref={inputRef}
+            value={query}
             onChange={e => { setQuery(e.target.value); setCursor(0) }}
             onKeyDown={handleKeyDown}
             placeholder="Search clients, opportunities, orders, quotes…"
-            className="flex-1 text-sm text-gray-900 placeholder-gray-400 outline-none bg-transparent" />
+            className="flex-1 text-sm text-gray-900 placeholder-gray-400 outline-none bg-transparent"
+          />
           {loading && <Loader2 size={14} className="animate-spin text-gray-400 shrink-0" />}
-          {!loading && query && <button onClick={() => setQuery('')} className="text-gray-400 hover:text-gray-600"><X size={14} /></button>}
+          {!loading && query && (
+            <button onClick={() => setQuery('')} className="text-gray-400 hover:text-gray-600"><X size={14} /></button>
+          )}
           <kbd className="text-[10px] text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 border border-gray-200">Esc</kbd>
         </div>
 
         {/* Results */}
         <div className="overflow-y-auto flex-1">
-          {!query && <p className="text-center text-sm text-gray-400 py-10">Type to search everything…</p>}
-          {query && query.length < 2 && <p className="text-center text-sm text-gray-400 py-10">Keep typing…</p>}
+          {!query && (
+            <p className="text-center text-sm text-gray-400 py-10">Type to search everything…</p>
+          )}
+          {query && query.length < 2 && (
+            <p className="text-center text-sm text-gray-400 py-10">Keep typing…</p>
+          )}
           {!loading && results && results.total === 0 && (
             <p className="text-center text-sm text-gray-400 py-10">No results for "{query}"</p>
           )}
+
           {results && results.total > 0 && (
             <div className="pb-3">
+
               {/* Clients */}
               {results.clients?.length > 0 && <>
                 <SecHeader icon={Users} label="Clients" count={results.clients.length} color="text-blue-500" />
-                {results.clients.map((c, i) => {
+                {results.clients.map(c => {
                   const idx = flat.findIndex(f => f.id === `c-${c.id}`)
                   return (
-                    <button key={c.id} onClick={() => { navigate(`/clients/${c.id}`); setOpen(false) }}
+                    <button key={c.id} onClick={() => { navigate(`/clients/${c.id}`); onClose() }}
                       className={`w-full text-left px-4 py-2.5 transition-colors ${cursor === idx ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
                       <p className="text-sm font-medium text-gray-900">{c.name}</p>
                     </button>
@@ -152,7 +174,7 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                 {results.opportunities.map(o => {
                   const idx = flat.findIndex(f => f.id === `o-${o.id}`)
                   return (
-                    <button key={o.id} onClick={() => { onOppClick?.(o.id); setOpen(false) }}
+                    <button key={o.id} onClick={() => { onOppClick?.(o.id) }}
                       className={`w-full text-left px-4 py-2.5 transition-colors ${cursor === idx ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
@@ -163,7 +185,6 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                           <p className="text-xs text-gray-500 truncate mt-0.5">
                             {o.client_name}{o.stage && ` · ${o.stage}`}
                           </p>
-                          {/* Linked quotes + orders */}
                           {(o.quotes?.length > 0 || o.orders?.length > 0) && (
                             <div className="mt-1 space-y-0.5">
                               {o.quotes?.slice(0, 2).map(q => (
@@ -198,7 +219,7 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                 {results.quotes.map(q => {
                   const idx = flat.findIndex(f => f.id === `q-${q.id}`)
                   return (
-                    <button key={q.id} onClick={() => { onOppClick?.(q.opportunity_id); setOpen(false) }}
+                    <button key={q.id} onClick={() => { onOppClick?.(q.opportunity_id) }}
                       className={`w-full text-left px-4 py-2.5 transition-colors ${cursor === idx ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -221,7 +242,7 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                 {results.orders.map(ord => {
                   const idx = flat.findIndex(f => f.id === `ord-${ord.id}`)
                   return (
-                    <button key={ord.id} onClick={() => { onOrderClick?.(ord.id); setOpen(false) }}
+                    <button key={ord.id} onClick={() => { onOrderClick?.(ord.id) }}
                       className={`w-full text-left px-4 py-2.5 transition-colors ${cursor === idx ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
@@ -248,7 +269,7 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                 {results.recs.map(r => {
                   const idx = flat.findIndex(f => f.id === `r-${r.id}`)
                   return (
-                    <button key={r.id} onClick={() => { navigate(`/clients/${r.client_id}?tab=recommendations`); setOpen(false) }}
+                    <button key={r.id} onClick={() => { navigate(`/clients/${r.client_id}?tab=recommendations`); onClose() }}
                       className={`w-full text-left px-4 py-2.5 transition-colors ${cursor === idx ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
                       <p className="text-sm font-medium text-gray-900">{r.title}</p>
                       <p className="text-xs text-gray-500">{r.client_name}{r.priority && ` · ${r.priority}`}</p>
@@ -263,7 +284,7 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                 {results.assets.map(a => {
                   const idx = flat.findIndex(f => f.id === `a-${a.id}`)
                   return (
-                    <button key={a.id} onClick={() => { navigate(`/clients/${a.client_id}?tab=hardware`); setOpen(false) }}
+                    <button key={a.id} onClick={() => { navigate(`/clients/${a.client_id}?tab=hardware`); onClose() }}
                       className={`w-full text-left px-4 py-2.5 transition-colors ${cursor === idx ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
                       <p className="text-sm font-medium text-gray-900">{a.name}</p>
                       <p className="text-xs text-gray-500">
@@ -274,6 +295,7 @@ export default function GlobalSearch({ onOppClick, onOrderClick }) {
                   )
                 })}
               </>}
+
             </div>
           )}
         </div>
@@ -286,9 +308,9 @@ function buildFlat(results, { onOppClick, onOrderClick, navigate, close }) {
   if (!results) return []
   const items = []
   for (const c of results.clients || [])       items.push({ id: `c-${c.id}`,   action: () => { navigate(`/clients/${c.id}`); close() } })
-  for (const o of results.opportunities || []) items.push({ id: `o-${o.id}`,   action: () => { onOppClick?.(o.id); close() } })
-  for (const q of results.quotes || [])        items.push({ id: `q-${q.id}`,   action: () => { onOppClick?.(q.opportunity_id); close() } })
-  for (const o of results.orders || [])        items.push({ id: `ord-${o.id}`, action: () => { onOrderClick?.(o.id); close() } })
+  for (const o of results.opportunities || []) items.push({ id: `o-${o.id}`,   action: () => { onOppClick?.(o.id) } })
+  for (const q of results.quotes || [])        items.push({ id: `q-${q.id}`,   action: () => { onOppClick?.(q.opportunity_id) } })
+  for (const o of results.orders || [])        items.push({ id: `ord-${o.id}`, action: () => { onOrderClick?.(o.id) } })
   for (const r of results.recs || [])          items.push({ id: `r-${r.id}`,   action: () => { navigate(`/clients/${r.client_id}?tab=recommendations`); close() } })
   for (const a of results.assets || [])        items.push({ id: `a-${a.id}`,   action: () => { navigate(`/clients/${a.client_id}?tab=hardware`); close() } })
   return items
