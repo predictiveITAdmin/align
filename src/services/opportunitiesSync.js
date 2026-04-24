@@ -214,14 +214,29 @@ async function syncOpportunities(tenantId, forceSince = null) {
     since = sinceRow.rows[0]?.t
   }
 
-  // Fetch all active resources once for name lookup
+  // Fetch ALL resources (active + inactive) via POST /Resources/query.
+  // Fix 2026-04-24: previous code used GET /Resources?search=... which AT returns 405 for —
+  // the endpoint doesn't support GET. Silent failure (warn-only) meant no opp was ever
+  // populated with an owner name until a manual backfill. Also: opps can be owned by
+  // ex-staff whose Resource record is inactive, so no isActive filter here.
   let resourceMap = {}
   try {
-    const search = JSON.stringify({ filter: [{ field: 'isActive', op: 'eq', value: true }] })
-    const resRes = await client.get(`/Resources?search=${encodeURIComponent(search)}`)
-    for (const r of (resRes.data?.items || [])) {
-      resourceMap[r.id] = [r.firstName, r.lastName].filter(Boolean).join(' ')
-    }
+    let nextUrl = null
+    const initialBody = { filter: [{ field: 'id', op: 'gt', value: 0 }], MaxRecords: 500 }
+    do {
+      const r = nextUrl
+        ? await client.post(nextUrl, {})
+        : await client.post('/Resources/query', initialBody)
+      for (const res of (r.data?.items || [])) {
+        const nm = [res.firstName, res.lastName].filter(Boolean).join(' ')
+        if (nm) resourceMap[res.id] = nm
+      }
+      nextUrl = r.data?.pageDetails?.nextPageUrl || null
+      if (nextUrl) {
+        const u = new URL(nextUrl)
+        nextUrl = u.pathname + u.search
+      }
+    } while (nextUrl)
     console.log(`[opportunitiesSync] loaded ${Object.keys(resourceMap).length} resources`)
   } catch (err) {
     console.warn('[opportunitiesSync] could not fetch Resources:', err.message)
@@ -583,6 +598,36 @@ async function appendPoToAutotask(opportunityLocalId, newPo) {
   return { changed: true, po_numbers: updated }
 }
 
+// ─── Create a note on an Autotask Opportunity ────────────────────────────────
+/**
+ * Adds a note to the Autotask Opportunity documenting what happened.
+ * Non-fatal: logs a warning and returns if AT write fails.
+ */
+async function createOpportunityNote(opportunityLocalId, title, description) {
+  try {
+    const r = await db.query(
+      `SELECT autotask_opportunity_id FROM opportunities WHERE id = $1`,
+      [opportunityLocalId]
+    )
+    if (!r.rows.length) return
+    const atId = r.rows[0].autotask_opportunity_id
+    if (!atId) return
+
+    const client = buildClient()
+    await client.post('/OpportunityNotes', {
+      noteType:      1,              // General note
+      opportunityID: parseInt(atId, 10),
+      publish:       2,              // All contacts
+      title:         title.substring(0, 200),
+      description:   description.substring(0, 2000),
+    })
+  } catch (err) {
+    // Non-fatal — AT note creation is best-effort
+    const detail = err.response?.data?.errors?.[0]?.message || err.message
+    console.warn(`[opportunitiesSync] createOpportunityNote failed (opp ${opportunityLocalId}): ${detail}`)
+  }
+}
+
 // ─── Run all three in sequence for a tenant ──────────────────────────────────
 /**
  * @param {string} tenantId
@@ -605,6 +650,7 @@ module.exports = {
   syncQuotes,
   syncQuoteItems,
   appendPoToAutotask,
+  createOpportunityNote,
   parsePoField,
   serializePoField,
 }
