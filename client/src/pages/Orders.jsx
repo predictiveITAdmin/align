@@ -3,7 +3,7 @@ import {
   Package, Search, RefreshCw, Inbox, AlertTriangle, Truck,
   CheckCircle2, Clock, XCircle, ChevronDown, X, ExternalLink,
   Link2, Link2Off, ChevronRight, ArrowRight, Loader2,
-  AlertOctagon, Layers, Wrench,
+  AlertOctagon, Layers, Wrench, Upload,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -608,6 +608,9 @@ export default function Orders() {
   const [matchingAll, setMatchingAll] = useState(false)
   const [syncing, setSyncing]         = useState(false)
   const [matchResult, setMatchResult] = useState(null)
+  const [showImport, setShowImport]   = useState(false)
+  const [importing, setImporting]     = useState(false)
+  const [importResult, setImportResult] = useState(null)
 
   const loadStats = useCallback(() => {
     setStatsLoading(true)
@@ -636,6 +639,23 @@ export default function Orders() {
       loadQaView(qaView)
     } catch (err) {
       alert(`Failed to write PO: ${err.message || 'unknown error'}`)
+    }
+  }
+
+  async function handleImportCsv(file) {
+    if (!file) return
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const csv_content = await file.text()
+      const res = await api.post('/suppliers/import/ingram', { csv_content })
+      setImportResult(res)
+      loadOrders()
+      loadStats()
+    } catch (err) {
+      setImportResult({ error: err.message || 'Import failed' })
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -721,6 +741,13 @@ export default function Orders() {
         subtitle="Distributor orders, tracking, and opportunity mapping"
       >
         <button
+          onClick={() => setShowImport(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-sm text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+          title="Import Ingram Shipments CSV export for historical backfill"
+        >
+          <Upload size={14} /> Import CSV
+        </button>
+        <button
           onClick={runSync}
           disabled={syncing}
           className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-sm text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
@@ -737,6 +764,63 @@ export default function Orders() {
           {matchingAll ? 'Matching…' : 'Run Matcher'}
         </button>
       </PageHeader>
+
+      {/* Import CSV modal */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !importing && setShowImport(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-gray-900">Import Ingram Shipments CSV</h2>
+              <button onClick={() => !importing && setShowImport(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+            <div className="text-xs text-gray-500 mb-4 space-y-1">
+              <p>Upload a Shipments CSV exported from the Ingram Xvantage XI portal.</p>
+              <p><strong>Expected columns:</strong> Order date, Reseller PO, Order Type, Order number, Order amount, Status, Shipped date, End customer, Order placed by.</p>
+              <p>Split shipments of the same order are deduped by base order number. PO matching runs automatically on each imported order.</p>
+            </div>
+
+            <label className="block">
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                disabled={importing}
+                onChange={e => handleImportCsv(e.target.files?.[0])}
+                className="block w-full text-sm text-gray-600 file:mr-3 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-primary-600 file:text-white file:text-sm file:font-medium hover:file:bg-primary-700 file:cursor-pointer disabled:opacity-50"
+              />
+            </label>
+
+            {importing && (
+              <div className="mt-4 flex items-center gap-2 text-sm text-primary-600">
+                <Loader2 size={14} className="animate-spin" /> Parsing + importing…
+              </div>
+            )}
+
+            {importResult && !importResult.error && (
+              <div className="mt-4 p-3 rounded-lg bg-green-50 border border-green-200 text-sm">
+                <p className="font-medium text-green-800 mb-1">Import complete</p>
+                <ul className="text-xs text-green-700 space-y-0.5">
+                  <li>Parsed: {importResult.parsed} orders</li>
+                  <li>Imported/updated: {importResult.imported}</li>
+                  <li>Auto-matched to opps: <strong>{importResult.matched}</strong></li>
+                  {importResult.errors > 0 && <li className="text-red-600">Errors: {importResult.errors}</li>}
+                </ul>
+              </div>
+            )}
+            {importResult?.error && (
+              <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                {importResult.error}
+              </div>
+            )}
+
+            <div className="flex justify-end mt-5">
+              <button onClick={() => { setShowImport(false); setImportResult(null) }} disabled={importing}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 disabled:opacity-50">
+                {importResult ? 'Close' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Match result toast */}
       {matchResult && (

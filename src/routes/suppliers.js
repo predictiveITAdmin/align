@@ -232,6 +232,87 @@ router.post('/import/amazon', requireAuth, requireRole('tenant_admin', 'vcio', '
   res.json({ status: 'ok', parsed: normalizedOrders.length, imported, matched, errors })
 })
 
+// ─── POST /api/suppliers/import/ingram — parse + import Ingram Shipments CSV ─
+// Accepts { csv_content: string }. Stores orders with distributor='ingram_xi' so
+// CSV-imported rows dedupe against live-API rows via the (distributor,
+// distributor_order_id) unique key. Dupe rows get their fields enriched/filled in.
+router.post('/import/ingram', requireAuth, requireRole('tenant_admin', 'vcio', 'tam', 'global_admin'), async (req, res) => {
+  const { csv_content } = req.body
+  if (!csv_content || typeof csv_content !== 'string' || csv_content.trim().length < 10) {
+    return res.status(400).json({ error: 'csv_content is required' })
+  }
+
+  const ingramAdapter = getAdapter('ingram_xi_csv')
+  if (!ingramAdapter) return res.status(500).json({ error: 'Ingram CSV adapter not found' })
+
+  let normalizedOrders
+  try {
+    normalizedOrders = ingramAdapter.parseCsv(csv_content)
+  } catch (parseErr) {
+    return res.status(422).json({ error: 'CSV parse failed: ' + parseErr.message })
+  }
+
+  if (!normalizedOrders.length) {
+    return res.status(422).json({ error: 'No orders found in CSV. Check the file format — expected columns: Order date, Reseller PO, Order Type, Order number, Order amount, Status, Shipped date, ETA, End customer, Order placed by, Delivery exception.' })
+  }
+
+  // Find or create a supplier row for ingram_xi_csv (separate from live-API supplier
+  // so the /qa/stats and Ingram adapter history don't commingle).
+  let supplierRes = await db.query(
+    `SELECT id FROM suppliers WHERE tenant_id = $1 AND adapter_key = 'ingram_xi_csv'`,
+    [req.tenant.id]
+  )
+  let supplierId
+  if (!supplierRes.rows.length) {
+    const secret = crypto.randomBytes(32).toString('hex')
+    const suffix = crypto.randomBytes(8).toString('hex')
+    const newSupplier = await db.query(
+      `INSERT INTO suppliers (tenant_id, adapter_key, display_name, is_enabled, sync_mode,
+                              webhook_url_suffix, webhook_secret)
+       VALUES ($1, 'ingram_xi_csv', 'Ingram Micro (CSV Import)', true, 'csv_import', $2, $3)
+       ON CONFLICT (tenant_id, adapter_key) DO UPDATE SET updated_at = NOW()
+       RETURNING id`,
+      [req.tenant.id, suffix, secret]
+    )
+    supplierId = newSupplier.rows[0].id
+  } else {
+    supplierId = supplierRes.rows[0].id
+  }
+
+  const { upsertOrder } = require('../services/distributorSync')
+  const { matchOrder }   = require('../services/orderMatcher')
+
+  // Use adapter.distributorKey so orders land with distributor='ingram_xi'
+  // (same as live API) — lets the (distributor, distributor_order_id) unique
+  // constraint merge CSV imports with any existing API rows.
+  const distributorKey = ingramAdapter.distributorKey || ingramAdapter.adapterKey
+
+  let imported = 0, matched = 0, errors = 0
+  for (const order of normalizedOrders) {
+    try {
+      const orderId = await upsertOrder(req.tenant.id, supplierId, distributorKey, order)
+      imported++
+      try {
+        const result = await matchOrder(req.tenant.id, orderId)
+        if (result.confidence >= 80) matched++
+      } catch {
+        // matcher failure non-fatal
+      }
+    } catch (err) {
+      errors++
+      console.error('[suppliers/import/ingram] upsert error:', err.message)
+    }
+  }
+
+  await db.query(
+    `UPDATE suppliers SET last_sync_at = NOW(), last_sync_status = 'ok' WHERE id = $1`,
+    [supplierId]
+  )
+
+  console.log(`[suppliers/import/ingram] tenant ${req.tenant.id}: parsed=${normalizedOrders.length} imported=${imported} matched=${matched} errors=${errors}`)
+  res.json({ status: 'ok', parsed: normalizedOrders.length, imported, matched, errors })
+})
+
 // ─── DELETE /api/suppliers/:id ───────────────────────────────────────────────
 router.delete('/:id', requireAuth, requireRole('tenant_admin', 'global_admin'), async (req, res) => {
   try {

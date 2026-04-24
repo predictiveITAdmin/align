@@ -36,6 +36,7 @@
 
 const { ORDER_STATUS } = require('./constants')
 const ingramXi           = require('./ingram_xi')
+const ingramXiCsv        = require('./ingram_xi_csv')
 const tdsynnexEcx        = require('./tdsynnex_ecx')
 const tdsynnexEsolutions = require('./tdsynnex_esolutions')
 const amazonBusinessCsv  = require('./amazon_business_csv')
@@ -44,6 +45,7 @@ const dellPremier        = require('./dell_premier')
 
 const adapters = {
   ingram_xi:            ingramXi,
+  ingram_xi_csv:        ingramXiCsv,        // CSV import — fills gaps the ~30-day API window misses
   tdsynnex_ecx:         tdsynnexEcx,        // legacy stub — superseded by esolutions
   tdsynnex_esolutions:  tdsynnexEsolutions, // active — eSolutions XML/SOAP API
   amazon_business_csv:  amazonBusinessCsv,
