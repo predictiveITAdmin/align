@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle, ExternalLink, CheckCircle2,
+  X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle, ExternalLink, CheckCircle2, RefreshCw,
 } from 'lucide-react'
 import { api } from '../lib/api'
 
@@ -331,6 +331,8 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
   const [showMapper, setShowMapper]       = useState(false)
   const [unmapping, setUnmapping]         = useState(false)
   const [markingDelivered, setMarkingDelivered] = useState(false)
+  const [refreshingTracking, setRefreshingTracking] = useState(false)
+  const [trackingMsg, setTrackingMsg] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -368,6 +370,34 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
     }
   }
 
+  async function handleRefreshTracking() {
+    setRefreshingTracking(true)
+    setTrackingMsg(null)
+    try {
+      const r = await api.post(`/orders/${orderId}/refresh-tracking`)
+      const results = r.results || []
+      if (!results.length) {
+        setTrackingMsg('No tracking numbers on this order.')
+      } else {
+        const delivered = results.filter(x => x.normalized_status === 'delivered').length
+        const errs     = results.filter(x => x.error).length
+        const parts = []
+        if (delivered) parts.push(`${delivered} delivered`)
+        if (errs)      parts.push(`${errs} failed`)
+        if (!delivered && !errs) parts.push(`${results.length} checked — still in transit`)
+        setTrackingMsg(parts.join(' · '))
+      }
+      onRefresh?.()
+      const r2 = await api.get(`/orders/${orderId}`)
+      setOrder(r2.data)
+    } catch (err) {
+      setTrackingMsg(err.message || 'Failed to refresh tracking')
+    } finally {
+      setRefreshingTracking(false)
+      setTimeout(() => setTrackingMsg(null), 6000)
+    }
+  }
+
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
@@ -398,9 +428,14 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
           <div className="flex-1 overflow-y-auto">
             {/* Summary */}
             <div className="p-5 border-b border-gray-100">
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <StatusPill status={order.status} />
                 <StatusPill status={order.match_status} type="match" />
+                {order.is_recurring && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-purple-50 text-purple-700 border-purple-200">
+                    renewal / subscription
+                  </span>
+                )}
               </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
                 {order.po_number && (<>
@@ -467,6 +502,14 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                     {markingDelivered ? 'Updating…' : 'Mark Delivered'}
                   </button>
                 )}
+                {['shipped','partially_shipped','out_for_delivery'].includes(order.status)
+                  && order.items?.some(i => i.tracking_number) && (
+                  <button onClick={handleRefreshTracking} disabled={refreshingTracking}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-700 bg-blue-50 text-sm rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50">
+                    <RefreshCw size={13} className={refreshingTracking ? 'animate-spin' : ''} />
+                    {refreshingTracking ? 'Checking…' : 'Refresh Tracking'}
+                  </button>
+                )}
                 {order.match_status !== 'matched' && (
                   <button onClick={() => setShowMapper(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 transition-colors">
@@ -486,6 +529,11 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                   </button>
                 )}
               </div>
+              {trackingMsg && (
+                <p className="text-xs text-gray-600 mt-2 bg-blue-50 border border-blue-100 rounded px-2 py-1.5">
+                  {trackingMsg}
+                </p>
+              )}
             </div>
 
             {/* Line items */}
@@ -555,6 +603,14 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                                 })}
                               </div>
                             )}
+                          </div>
+                        )}
+                        {Array.isArray(item.serial_numbers) && item.serial_numbers.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-gray-100 text-xs">
+                            <span className="text-gray-500 mr-2">Serial{item.serial_numbers.length > 1 ? 's' : ''}:</span>
+                            <span className="font-mono text-gray-800">
+                              {item.serial_numbers.join(', ')}
+                            </span>
                           </div>
                         )}
                       </div>

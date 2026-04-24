@@ -16,6 +16,8 @@ const db = require('../db')
 const { getAdapter } = require('./distributors')
 const { decryptCredentials } = require('./supplierCrypto')
 const { matchOrder } = require('./orderMatcher')
+const { refreshTrackingForTenant } = require('./carrierTracking')
+const { linkSerialsForTenant } = require('./serialAssetLinker')
 
 // ─── syncSupplier — sync one supplier for its tenant ─────────────────────────
 async function syncSupplier(supplier) {
@@ -113,6 +115,32 @@ async function syncSupplier(supplier) {
   }
 }
 
+// ─── Recurring / SaaS detection ──────────────────────────────────────────────
+// Orders where EVERY line item looks like a license/subscription renewal
+// (Meraki LIC-*-1YR, SaaS annual maintenance, monthly VCSP rentals, etc.)
+// shouldn't show up as "open orders" — they're just invoices for already-fulfilled
+// subscriptions, not shipments to track.
+const _RECURRING_DESC_PATTERNS = [
+  /subscription/i, /monthly/i, /annual/i, /license/i, /rental/i,
+  /-\s*1\s*Y/i, /-\s*3\s*Y/i, /-\s*5\s*Y/i, /\b1YR\b/i, /\b3YR\b/i, /\b5YR\b/i,
+  /maintenance/i, /renewal/i, /saas/i, /\bsupport\s/i,
+]
+const _RECURRING_PART_PATTERNS = [
+  /^LIC[-\s]/i, /-1YR/i, /-3YR/i, /-5YR/i, /-[135]Y$/i,
+  /^SUB-/i, /^SAAS-/i, /^MNT-/i, /^REN-/i,
+]
+function _isRecurringItem(item) {
+  const d = item?.description || ''
+  const p = item?.mfg_part_number || ''
+  if (_RECURRING_DESC_PATTERNS.some(rx => rx.test(d))) return true
+  if (_RECURRING_PART_PATTERNS.some(rx => rx.test(p))) return true
+  return false
+}
+function detectRecurringOrder(items) {
+  if (!items || !items.length) return false
+  return items.every(_isRecurringItem)
+}
+
 // ─── upsertOrder — insert/update one normalized order + its items ─────────────
 async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
   const client = await db.pool.connect()
@@ -126,13 +154,15 @@ async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
     const shipToAddr  = normalized.ship_to_address || normalized.ship_to || null
     const metadata    = normalized.metadata ?? normalized.raw ?? null
 
+    const isRecurring = detectRecurringOrder(normalized.items || [])
+
     const orderRes = await client.query(`
       INSERT INTO distributor_orders (
         tenant_id, supplier_id, distributor, distributor_order_id, po_number,
         order_date, status, status_raw,
         subtotal, tax, shipping, total, currency,
-        ship_to_name, ship_to_address, metadata
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+        ship_to_name, ship_to_address, metadata, is_recurring
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       ON CONFLICT (distributor, distributor_order_id) DO UPDATE SET
         status          = COALESCE(EXCLUDED.status,          distributor_orders.status),
         status_raw      = COALESCE(EXCLUDED.status_raw,      distributor_orders.status_raw),
@@ -143,6 +173,7 @@ async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
         ship_to_name    = COALESCE(EXCLUDED.ship_to_name,    distributor_orders.ship_to_name),
         ship_to_address = COALESCE(EXCLUDED.ship_to_address, distributor_orders.ship_to_address),
         metadata        = EXCLUDED.metadata,
+        is_recurring    = EXCLUDED.is_recurring,
         last_synced_at  = NOW(),
         updated_at      = NOW()
       RETURNING id
@@ -154,6 +185,7 @@ async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
       normalized.currency || 'USD',
       shipToName, shipToAddr ? JSON.stringify(shipToAddr) : null,
       metadata ? JSON.stringify(metadata) : null,
+      isRecurring,
     ])
 
     const orderId = orderRes.rows[0].id
@@ -218,12 +250,27 @@ async function syncAllSuppliers(tenantId) {
     results.push({ adapter_key: supplier.adapter_key, ...result })
   }
 
-  // After every sync, infer delivered status for shipped orders past carrier threshold
+  // After every sync: first try real carrier tracking (EasyPost), then fall
+  // back to date-based inference for any remaining shipped orders.
+  try {
+    const tracked = await refreshTrackingForTenant(tenantId)
+    if (tracked > 0) console.log(`[distributorSync] carrier tracking marked ${tracked} orders delivered for tenant ${tenantId}`)
+  } catch (e) {
+    console.warn('[distributorSync] carrier tracking error (non-fatal):', e.message)
+  }
+
   try {
     const inferred = await inferDeliveries(tenantId)
     if (inferred > 0) console.log(`[distributorSync] inferred ${inferred} delivered orders for tenant ${tenantId}`)
   } catch (e) {
     console.error('[distributorSync] inferDeliveries error:', e.message)
+  }
+
+  // Link any serial numbers in the order items to existing Autotask assets
+  try {
+    await linkSerialsForTenant(tenantId)
+  } catch (e) {
+    console.warn('[distributorSync] serial-asset link error (non-fatal):', e.message)
   }
 
   return { ok: true, results }
@@ -272,4 +319,4 @@ async function inferDeliveries(tenantId) {
   return updated
 }
 
-module.exports = { syncAllSuppliers, syncSupplier, upsertOrder, inferDeliveries }
+module.exports = { syncAllSuppliers, syncSupplier, upsertOrder, inferDeliveries, detectRecurringOrder }
