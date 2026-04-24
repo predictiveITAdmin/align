@@ -405,6 +405,31 @@ async function getMatchSuggestions(tenantId, orderId, searchQuery = null) {
     }
   }
 
+  // ── Strategy 6: Recent closed — always show something as a fallback ──────────
+  // Only runs when no other strategies found enough matches.
+  const RECENT_CLOSED_LIMIT = 8
+  if (suggestions.length < 4) {
+    const recentRes = await db.query(
+      `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
+              o.created_date, o.closed_date, o.expected_close,
+              c.name AS client_name
+         FROM opportunities o
+         LEFT JOIN clients c ON c.id = o.client_id
+        WHERE o.tenant_id = $1
+          AND o.closed_date IS NOT NULL
+        ORDER BY o.closed_date DESC
+        LIMIT $2`,
+      [tenantId, RECENT_CLOSED_LIMIT]
+    )
+    for (const row of recentRes.rows) {
+      pushIfNew(row, {
+        match_method: 'recent_closed',
+        match_reason: `Recently closed`,
+        confidence: 20,
+      })
+    }
+  }
+
   return suggestions
 }
 

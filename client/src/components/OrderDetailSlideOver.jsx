@@ -99,6 +99,7 @@ const GROUP_META = [
   { key: 'part_overlap',   label: 'Part numbers match',      tint: 'indigo' },
   { key: 'date_proximity', label: 'Closed near order date',  tint: 'blue'   },
   { key: 'client_name',    label: 'Same client',             tint: 'gray'   },
+  { key: 'recent_closed',  label: 'Recently closed',         tint: 'yellow' },
 ]
 const GROUP_TINT = {
   green:  'bg-green-50  text-green-700  border-green-200',

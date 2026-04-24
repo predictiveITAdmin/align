@@ -261,27 +261,57 @@ function normalizeOrder(raw, creds) {
       country: shipTo.countryCode,
     },
     items: lines.map(l => {
+      // Ingram detail response nests tracking inside carrierDetails.trackingDetails[]
+      // Summary search response uses a flat structure — handle both.
       const shipments = Array.isArray(l.shipmentDetails) ? l.shipmentDetails : []
-      const trackingNumbers = shipments.map(s => s.trackingNumber).filter(Boolean)
+      const trackingNumbers = []
+      let primaryCarrier = null
+      let primaryShipDate = null
+      let primaryDelivery = null
+      for (const s of shipments) {
+        if (!primaryShipDate) primaryShipDate = s.shippedDate || null
+        if (!primaryDelivery) primaryDelivery = s.estimatedDeliveryDate || null
+        // Detail endpoint: carrierDetails.carrierName + carrierDetails.trackingDetails[]
+        const cd = s.carrierDetails
+        if (cd) {
+          if (!primaryCarrier) primaryCarrier = cd.carrierName || null
+          for (const td of (cd.trackingDetails || [])) {
+            if (td.trackingNumber) trackingNumbers.push(td.trackingNumber)
+          }
+        } else {
+          // Summary/search endpoint: trackingNumber directly on shipment
+          if (!primaryCarrier) primaryCarrier = s.carrierName || null
+          if (s.trackingNumber) trackingNumbers.push(s.trackingNumber)
+        }
+      }
+      // Quantity shipped = sum of shipmentDetails[].quantity (detail endpoint doesn't have l.quantityShipped)
+      const qtyShipped = l.quantityShipped
+        ?? shipments.reduce((sum, s) => sum + (s.quantity || 0), 0)
+      // Serial numbers can live on trackingDetails
+      const serials = [
+        ...(l.serialNumberDetails || []).map(s => s.serialNumber),
+        ...shipments.flatMap(s => (s.carrierDetails?.trackingDetails || []).flatMap(td => td.SerialNumbers || []).map(sn => sn.serialNumber || sn)),
+      ].filter(Boolean)
+
       return {
-        distributor_line_id:  String(l.subOrderLineNumber || l.lineNumber || ''),
-        mfg_part_number:      l.vendorPartNumber || l.manufacturerPartNumber || null,
+        distributor_line_id:  String(l.subOrderNumber || l.subOrderLineNumber || l.ingramOrderLineNumber || l.lineNumber || ''),
+        mfg_part_number:      l.vendorPartNumber || l.manufacturerPartNumber || l.ingramPartNumber || null,
         manufacturer:         l.vendorName || l.manufacturer || null,
-        description:          l.description || null,
+        description:          l.partDescription || l.description || null,
         quantity_ordered:     l.quantityOrdered || l.quantity || 0,
-        quantity_shipped:     l.quantityShipped || 0,
-        quantity_backordered: l.quantityBackordered || 0,
+        quantity_shipped:     qtyShipped || 0,
+        quantity_backordered: l.quantityBackOrdered || l.quantityBackordered || 0,
         quantity_cancelled:   l.quantityCancelled || 0,
         unit_cost:            l.unitPrice || l.netPrice || null,
         line_total:           l.extendedPrice || null,
         tracking_number:      trackingNumbers[0] || null,
-        carrier:              shipments[0]?.carrierName || null,
-        ship_date:            shipments[0]?.shippedDate || null,
-        expected_delivery:    shipments[0]?.estimatedDeliveryDate || null,
-        serial_numbers:       (l.serialNumberDetails || []).map(s => s.serialNumber).filter(Boolean),
+        carrier:              primaryCarrier,
+        ship_date:            primaryShipDate,
+        expected_delivery:    primaryDelivery || l.promisedDeliveryDate || null,
+        serial_numbers:       [...new Set(serials)],
         metadata: {
-          tracking_numbers:   trackingNumbers,         // all packages for the line
-          long_description:   l.longDescription || l.productDescription || null,
+          tracking_numbers: trackingNumbers,   // all packages for the line
+          long_description: l.longDescription || l.productDescription || l.partDescription || null,
         },
       }
     }),

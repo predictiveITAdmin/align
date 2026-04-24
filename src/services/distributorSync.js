@@ -158,29 +158,36 @@ async function upsertOrder(tenantId, supplierId, adapterKey, normalized) {
 
     const orderId = orderRes.rows[0].id
 
-    // Upsert line items
-    for (const item of (normalized.items || [])) {
-      await client.query(`
-        INSERT INTO distributor_order_items (
-          distributor_order_id, distributor_line_id, mfg_part_number,
-          manufacturer, description,
-          quantity_ordered, quantity_shipped, quantity_backordered, quantity_cancelled,
-          unit_cost, line_total,
-          tracking_number, carrier, ship_date, expected_delivery, serial_numbers,
-          metadata
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-        ON CONFLICT DO NOTHING
-      `, [
-        orderId,
-        item.distributor_line_id, item.mfg_part_number,
-        item.manufacturer, item.description,
-        item.quantity_ordered || 0, item.quantity_shipped || 0,
-        item.quantity_backordered || 0, item.quantity_cancelled || 0,
-        item.unit_cost, item.line_total,
-        item.tracking_number, item.carrier, item.ship_date,
-        item.expected_delivery, item.serial_numbers || [],
-        item.metadata || null,
-      ])
+    // Replace line items fresh on every sync — ensures tracking/status updates land.
+    // Only delete+reinsert when the API returned items (don't wipe detail on summary-only syncs).
+    const newItems = normalized.items || []
+    if (newItems.length > 0) {
+      await client.query(
+        `DELETE FROM distributor_order_items WHERE distributor_order_id = $1`,
+        [orderId]
+      )
+      for (const item of newItems) {
+        await client.query(`
+          INSERT INTO distributor_order_items (
+            distributor_order_id, distributor_line_id, mfg_part_number,
+            manufacturer, description,
+            quantity_ordered, quantity_shipped, quantity_backordered, quantity_cancelled,
+            unit_cost, line_total,
+            tracking_number, carrier, ship_date, expected_delivery, serial_numbers,
+            metadata
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        `, [
+          orderId,
+          item.distributor_line_id, item.mfg_part_number,
+          item.manufacturer, item.description,
+          item.quantity_ordered || 0, item.quantity_shipped || 0,
+          item.quantity_backordered || 0, item.quantity_cancelled || 0,
+          item.unit_cost, item.line_total,
+          item.tracking_number, item.carrier, item.ship_date,
+          item.expected_delivery, item.serial_numbers || [],
+          item.metadata || null,
+        ])
+      }
     }
 
     await client.query('COMMIT')
