@@ -118,6 +118,26 @@ standard (e.g. one MFA control can show CMMC-L2 IA.L2-3.5.3 + NIST-800-171
 3.5.3 + ISO A.5.17 + PCI-DSS 8.4). Renders as small pill badges under the
 item title.
 
+**Phase 4: Bulk approve drafts**
+
+New `POST /api/standards/bulk-approve` endpoint (requires tenant_admin
+or vcio or global_admin). Accepts `{ section_id }` to approve every
+draft in a given section, `{ ids: [...] }` for explicit lists, or no
+filter to approve all drafts in the tenant. Sets `status='approved'`
+and `last_reviewed_at=NOW()`. Only rows currently at `status='draft'`
+are updated (no-op on already-approved).
+
+UI: the Standards page shows a green **"Approve N Drafts"** button next
+to the existing "Add Standard" action whenever the current scope (the
+selected section, or selected category, or all standards) contains any
+drafts. Scope-aware count; confirm dialog before firing. Lives in
+`client/src/pages/Standards.jsx` alongside the toolbar.
+
+Unblocks the 1,379 MyITProcess drafts waiting for approval. Recommended
+order: CMMC L1/L2 → PCI-DSS → NIST 800-171 → NIST CSF → ISO 27001 →
+HIPAA → operational sections (Server Infra, Hardware, etc.). See
+`docs/phase-4-assessments.md#bulk-approve-drafts-shipped-2026-04-24`.
+
 **Infrastructure: pm2-logrotate installed**
 
 `pm2.log` had grown to 11 GB from years of unrotated daemon events

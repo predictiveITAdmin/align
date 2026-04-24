@@ -6,7 +6,8 @@ framework-specific gap assessments, per-client review cadence, and
 answer inheritance across assessments.
 
 **Status:** Core built and live (2026-04-24). 1,379 MyITProcess standards
-imported as drafts awaiting approval.
+imported as drafts awaiting approval. Bulk-approve action shipped; see
+[Bulk Approve Drafts](#bulk-approve-drafts-shipped-2026-04-24) below.
 
 ---
 
@@ -185,13 +186,36 @@ date + last response badge on each card.
 **Client Profile tab:** Review Cadence selector (Monthly / Quarterly /
 Semi-Annual / Annual).
 
+## Bulk Approve Drafts (shipped 2026-04-24)
+
+The Standards page exposes a green **"Approve N Drafts"** button next to
+"Add Standard" whenever the current section/category scope contains
+draft standards. It hits `POST /api/standards/bulk-approve` with either
+`{ section_id }` (approve all drafts in a section) or `{ ids: [...] }`
+(specific ids). Approved standards become immediately available to
+framework gap assessments and client auto-mapping.
+
+Recommended approval order (authoritative → needs-review):
+
+1. CMMC Level 1 (14) and Level 2 (110) — authoritative government content
+2. PCI-DSS 4.0.1 (123) — authoritative PCI SSC content
+3. NIST 800-171 R2 (167) — authoritative NIST
+4. NIST CSF 2.0 (106) — authoritative
+5. ISO 27001:2022 (366) — ISO; large batch, review a few per Annex before approving
+6. HIPAA Cybersecurity (249) — compiled from HHS 405(d) guidance; worth review
+7. Server Infrastructure (98), Hardware & Peripherals (31),
+   Physical & Environmental (69), etc. — operational content
+
 ## Not Yet Built (Parked)
 
-- **Standards drafts approval** — 1,379 drafts pending bulk approval
-  by section
-- **Second-pass dedup** — 1 very-likely merge executed (ISO A.5.24);
-  18 probable + 16 possible candidates still in
-  `/tmp/standards_import/dedup_second_pass.md`
+- **Standards drafts approval** — 1,379 drafts pending; **use the
+  Bulk Approve button on the Standards page** (section_id scope is
+  fastest)
+- **Second-pass dedup** — 8 merges executed (see
+  `scripts/standards_import/08_execute_merges.js` and
+  `09_execute_batch_merges.js`); ~10 possible candidates still in
+  `/tmp/standards_import/dedup_second_pass.md` at 75-79% that could be
+  re-reviewed after drafts are approved
 - **Broad auto-mapping** — only 3 of 99 clients have `client_standards`
   rows populated; run `POST /api/standards/auto-map-all` after drafts
   are approved
@@ -199,6 +223,9 @@ Semi-Annual / Annual).
   standalone UI page yet (only client-detail view)
 - **Mass assessment creation** — no "create onboarding phase 1 for all
   new clients in X vertical" bulk action yet
+- **Merge candidate review UI** — borderline dedup candidates currently
+  require a manual curated batch script; a review/approve UI on the
+  Standards page would speed future reimports
 
 ## Related Files
 

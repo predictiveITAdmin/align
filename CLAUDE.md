@@ -30,6 +30,7 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 - **Answer inheritance** — any new assessment auto-pre-fills response from most recent prior assessment for same `(client, standard)`; violet "↩ Inherited" badge
 - **Evidence examples** (text[] on standards) — topic-matched compliance artifacts
 - **Cross-framework badges** — assessment items show all framework tags (e.g. one MFA standard shows CMMC + NIST + ISO + PCI + HIPAA)
+- **Bulk approve drafts** — `POST /api/standards/bulk-approve` + green button on Standards page. Scope-aware (section / category / all). Use to approve the 1,379 MyITProcess drafts in batches.
 - **Resolve:** SettingsShell and AdminShell now expose the other shell's nav when user is global_admin (symmetric nav)
 - **Infra:** pm2-logrotate installed; truncated 11.6GB of bloat that caused 2026-04-23 disk-full → M365 SSO outage
 

@@ -451,6 +451,50 @@ router.post('/:id/review', requireAuth, async (req, res) => {
   }
 })
 
+// ─── POST /api/standards/bulk-approve — approve many drafts at once ──────────
+// Body: { section_id?: uuid, status?: 'draft', ids?: uuid[], new_status?: 'approved' }
+// If section_id given → approve all drafts in that section
+// If ids[] given → approve those specific ids
+router.post('/bulk-approve', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
+  const { section_id, ids, new_status } = req.body
+  const target = new_status || 'approved'
+
+  try {
+    let result
+    if (Array.isArray(ids) && ids.length > 0) {
+      result = await db.query(
+        `UPDATE standards SET status = $3, last_reviewed_at = NOW(), updated_at = NOW()
+         WHERE id = ANY($1) AND tenant_id = $2 AND status = 'draft'
+         RETURNING id`,
+        [ids, req.tenant.id, target]
+      )
+    } else if (section_id) {
+      result = await db.query(
+        `UPDATE standards s SET status = $3, last_reviewed_at = NOW(), updated_at = NOW()
+         FROM standard_categories sc
+         WHERE s.category_id = sc.id
+           AND sc.section_id = $1
+           AND s.tenant_id = $2
+           AND s.status = 'draft'
+         RETURNING s.id`,
+        [section_id, req.tenant.id, target]
+      )
+    } else {
+      // No filter → approve ALL drafts in tenant (use with care)
+      result = await db.query(
+        `UPDATE standards SET status = $2, last_reviewed_at = NOW(), updated_at = NOW()
+         WHERE tenant_id = $1 AND status = 'draft'
+         RETURNING id`,
+        [req.tenant.id, target]
+      )
+    }
+    res.json({ updated_count: result.rowCount, status: target })
+  } catch (err) {
+    console.error('[standards] bulk-approve error:', err.message)
+    res.status(500).json({ error: 'Failed to bulk-approve' })
+  }
+})
+
 // ─── Helper: compute next review date ─────────────────────────────────────────
 function computeNextReview(frequency) {
   const now = new Date()

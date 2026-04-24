@@ -4,7 +4,7 @@ import {
   LayoutTemplate, Plus, Copy, Star, ChevronRight, Layers, CheckSquare, X,
   BookOpen, FolderOpen, ChevronDown, Search, Check, Clock, AlertTriangle,
   Filter, Tag, Edit2, Trash2, Eye, EyeOff, RefreshCw, Calendar, Folder,
-  Shield, Zap, Monitor, Users, Globe, ChevronUp,
+  Shield, Zap, Monitor, Users, Globe, ChevronUp, CheckCircle,
 } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import Card, { CardBody } from '../components/Card'
@@ -871,6 +871,45 @@ function StandardsLibrary() {
               placeholder="Search standards..."
               className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-400" />
           </div>
+          {(() => {
+            // Count drafts in current scope (section or all)
+            const scopeDrafts = standards.filter(s => {
+              if (s.status !== 'draft') return false
+              if (selectedCategory) return s.category_id === selectedCategory
+              if (selectedSection) {
+                const cat = categories.find(c => c.id === s.category_id)
+                return cat?.section_id === selectedSection
+              }
+              return true
+            }).length
+
+            if (scopeDrafts === 0) return null
+
+            const scopeLabel = selectedCategory
+              ? (categories.find(c => c.id === selectedCategory)?.name || 'category')
+              : (selectedSection ? (sections.find(s => s.id === selectedSection)?.name || 'section') : 'tenant')
+
+            return (
+              <button onClick={async () => {
+                if (!confirm(`Approve all ${scopeDrafts} draft standards in "${scopeLabel}"?`)) return
+                const body = selectedSection && !selectedCategory ? { section_id: selectedSection }
+                  : selectedCategory ? { ids: standards.filter(s => s.status === 'draft' && s.category_id === selectedCategory).map(s => s.id) }
+                  : {}
+                try {
+                  const res = await api.post('/standards/bulk-approve', body)
+                  alert(`Approved ${res.updated_count} standard(s).`)
+                  // Reload standards
+                  const fresh = await api.get('/standards')
+                  setStandards(fresh.data || [])
+                } catch (err) {
+                  alert('Bulk approve failed: ' + (err.message || 'unknown'))
+                }
+              }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700">
+                <CheckCircle size={14} /> Approve {scopeDrafts} Draft{scopeDrafts !== 1 ? 's' : ''}
+              </button>
+            )
+          })()}
           <button onClick={() => { setEditStandard(null); setShowCreate(true) }}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700">
             <Plus size={15} /> Add Standard
