@@ -397,9 +397,21 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                   <span className="text-gray-500">Created</span>
                   <span className="text-gray-900">{fmtTs(order.created_at)}</span>
                 </>)}
+                {order.subtotal != null && order.subtotal !== order.total && (<>
+                  <span className="text-gray-500">Subtotal</span>
+                  <span className="text-gray-900">{fmt(order.subtotal)}</span>
+                </>)}
+                {order.shipping != null && order.shipping !== 0 && (<>
+                  <span className="text-gray-500">Shipping</span>
+                  <span className="text-gray-900">{fmt(order.shipping)}</span>
+                </>)}
+                {order.tax != null && order.tax !== 0 && (<>
+                  <span className="text-gray-500">Tax</span>
+                  <span className="text-gray-900">{fmt(order.tax)}</span>
+                </>)}
                 {order.total != null && (<>
-                  <span className="text-gray-500">Total</span>
-                  <span className="font-medium text-gray-900">{fmt(order.total)}</span>
+                  <span className="text-gray-500 font-medium">Total</span>
+                  <span className="font-semibold text-gray-900">{fmt(order.total)}</span>
                 </>)}
                 {order.client_name && (<>
                   <span className="text-gray-500">Client</span>
@@ -456,9 +468,18 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
             {/* Line items */}
             {order.items?.length > 0 && (
               <div className="p-5 border-b border-gray-100">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                  Line Items ({order.items.length})
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Line Items ({order.items.length})
+                  </h3>
+                  {(() => {
+                    const computed = order.items.reduce((sum, it) => sum + (parseFloat(it.line_total) || 0), 0)
+                    if (computed > 0 && order.total == null) {
+                      return <span className="text-xs text-gray-500">Est. {fmt(computed)}</span>
+                    }
+                    return null
+                  })()}
+                </div>
                 <div className="space-y-3">
                   {order.items.map((item, i) => {
                     // Prefer metadata.tracking_numbers[] (populated by adapters when
@@ -478,11 +499,17 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                             )}
                             {item.manufacturer && <p className="text-xs text-gray-500 mt-0.5">{item.manufacturer}</p>}
                           </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-xs text-gray-500">Ord: {item.quantity_ordered}</p>
+                          <div className="text-right shrink-0 space-y-0.5">
+                            <p className="text-xs text-gray-500">Qty: {item.quantity_ordered}</p>
                             {item.quantity_shipped > 0 && <p className="text-xs text-green-600">Ship: {item.quantity_shipped}</p>}
                             {item.quantity_backordered > 0 && <p className="text-xs text-orange-600">B/O: {item.quantity_backordered}</p>}
                             {item.quantity_cancelled > 0 && <p className="text-xs text-red-600">Can: {item.quantity_cancelled}</p>}
+                            {item.unit_cost != null && (
+                              <p className="text-xs text-gray-500 mt-1">{fmt(item.unit_cost)} ea</p>
+                            )}
+                            {item.line_total != null && (
+                              <p className="text-sm font-semibold text-gray-900">{fmt(item.line_total)}</p>
+                            )}
                           </div>
                         </div>
                         {(trackingList.length > 0 || item.carrier || item.ship_date || item.expected_delivery) && (
