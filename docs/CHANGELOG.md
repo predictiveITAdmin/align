@@ -18,6 +18,137 @@ implements it.
 
 ---
 
+## 2026-04-24 — Orders QA widgets + part-overlap SKU filter + Resolve auth nav
+
+**Orders Page: QA — Auto-Map Health widgets**
+
+Two new tiles under the existing stats row, visible only when count > 0:
+
+- **PO Not Written to AT** — orders auto-mapped to an opportunity whose PO
+  number was never pushed to `opportunities.po_numbers[]` in Autotask. Covers
+  the gap where non-exact matches (`po_fuzzy`, `part_overlap`, `client_name`)
+  skip writeback. Per-row **"Write PO to AT"** fix button triggers
+  `POST /api/orders/qa/write-po/:id` which invokes
+  `opportunitiesSync.appendPoToAutotask()`.
+- **Multi-Distributor Opps** — opportunities with orders from 2+ distinct
+  distributors. Full reconciliation table with:
+  - Actual Total (sum of all linked distributor orders)
+  - Expected Product Cost (from quote line items, **excluding** service/shipping)
+  - Variance (Actual − Expected, color-coded ≤$100 green, ≤$1k amber, >$1k red)
+  - Service Revenue Excluded column — shows what was filtered out
+  - Per-opp distributor chips + click-through to opp slide-over
+
+**New endpoints:**
+```
+GET  /api/orders/qa/pos-not-written      — list of orders missing AT PO writeback
+GET  /api/orders/qa/multi-distributor    — opps + reconciliation per distributor
+GET  /api/orders/qa/stats                — counts for the two tiles
+POST /api/orders/qa/write-po/:id         — fix action: push PO to AT
+```
+
+**Part-overlap SKU filter (`orderMatcher.js`)**
+
+`getMatchSuggestions()` part-overlap strategy now excludes internal service
+and shipping SKUs from both the match count and the denominator. Without
+this, a quote containing `Labor-Standard` + `Cabling-Project-Resale` could
+falsely match an unrelated distributor order just because labor lines
+appear on many quotes. Pattern:
+```
+^(labor|smart-labor|cabling|installation|install|shipping|freight)[-\s]?
+| ^(shipping & handling)$
+```
+Case-insensitive on `LOWER(TRIM(description))`. Exported as
+`INTERNAL_SKU_REGEX` and reused by the multi-distributor reconciliation
+query to compute Expected Product Cost.
+
+**Phase 4: Response modes on standards**
+
+Imported 1,387 MyITProcess standards were initially generated with 5-level
+maturity rubrics. A topic-aware classifier reclassified them:
+- **binary** (1,247) — Compliant / Non-Compliant / NA (3 responses)
+- **ternary** (29) — Yes / Partial / No / NA (4 responses)
+- **graded** (95) — full 5-level maturity (Satisfactory → At Risk + NA)
+- **informational** (8) — Documented / NA (2 responses, data-intake questions)
+
+Total `standard_responses` went from 6,935 → 4,376 (−37%). Schema added:
+```
+ALTER TABLE standards ADD COLUMN response_mode text DEFAULT 'graded';
+```
+Classifier heuristics in `/tmp/standards_import/05_classify_binary.py` —
+keys on multi-question count, list/checklist patterns, graded coverage
+language, and specific question-start phrases.
+
+The existing 5-pill response renderer in `AssessmentDetail.jsx`
+automatically renders 3 pills for binary standards (green Compliant /
+red Non-Compliant / gray N/A) — no UI branch required. Binary questions
+feel like yes/no toggles.
+
+**Phase 4: Framework Gap Assessment (`assessment_type='framework_gap'`)**
+
+New assessment type pulls only standards with a matching
+`standard_framework_tags.framework` entry. Picker in the New Assessment
+modal lists all configured frameworks with control counts (CMMC-L2,
+ISO-27001-2022, PCI-DSS-4, HIPAA, NIST-800-171-R2, NIST-CSF-2, CMMC-L1).
+Metadata `{framework: 'CMMC-L2'}` stored on the assessment row.
+
+New endpoint: `GET /api/assessments/frameworks` — per-framework counts.
+
+**Phase 4: Answer inheritance**
+
+On assessment creation (any type), `assessment_items.response_id` is
+pre-filled from the most recent response for `(client_id, standard_id)`
+across any prior assessment. Metadata records
+`inherited_from_assessment_id`. UI shows violet "↩ Inherited" badge and
+a banner in the notes panel citing the source assessment. Selecting a
+new response overrides it for the current assessment only (other
+assessments unchanged).
+
+**Phase 4: Evidence examples**
+
+Added `standards.evidence_examples text[]` column, populated during
+import for all framework-tagged standards using topic-matched templates
+(e.g. encryption → "Screenshot of BitLocker/FileVault encryption status
+across endpoints"; MFA → "Entra ID Conditional Access policies"). Shown
+in the assessment conduct UI when a standard's detail panel is expanded.
+
+**Phase 4: Cross-framework badges on standards**
+
+Each assessment item now displays all framework tags associated with its
+standard (e.g. one MFA control can show CMMC-L2 IA.L2-3.5.3 + NIST-800-171
+3.5.3 + ISO A.5.17 + PCI-DSS 8.4). Renders as small pill badges under the
+item title.
+
+**Infrastructure: pm2-logrotate installed**
+
+`pm2.log` had grown to 11 GB from years of unrotated daemon events
+(restart churn, app crashes). `/home/pitadmin/.pm2/logs/pg-cleanup-out.log`
+was also 652 MB from an orphaned PM2 process that had been removed but
+whose log file persisted. Root cause of 2026-04-23 disk-full incident
+that crashed PM2 and caused the M365 SSO button to disappear (MSAL client
+initialization requires env vars which were lost on crash-restart).
+
+Installed `pm2-logrotate` module with config:
+```
+max_size: 50M
+retain: 7
+compress: true
+workerInterval: 60 (seconds)
+rotateInterval: 0 0 * * * (daily at midnight)
+rotateModule: true (rotate logrotate's own output too)
+```
+Truncated the two offenders. Reclaimed 11.6 GB.
+
+**Resolve: Global admin sees tenant settings nav**
+
+`/opt/resolve/client/src/shells/SettingsShell.jsx` — when user is
+`global_admin`, sidebar now prepends the Global Admin nav groups
+(Tenants, Email, API Keys, Health, Call Logs, Feedback) above the tenant
+settings groups. Symmetric change to `AdminShell.jsx` adds tenant
+settings section. Global admins can now freely navigate between shells
+without URL typing. Tenant admins unchanged.
+
+---
+
 ## 2026-04-23 — Order Management: richer order card + predictive PO mapping
 
 **Order detail card (`OrderDetailSlideOver`)**

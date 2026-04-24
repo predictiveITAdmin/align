@@ -4,9 +4,9 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 
 ---
 
-## 🎯 Current Focus (2026-04-22)
+## 🎯 Current Focus (2026-04-24)
 
-**Active:** Order Management + Opportunities module polish. See [`docs/order-management-spec.md`](./docs/order-management-spec.md).
+**Active:** Orders QA instrumentation + Phase 4 standards import + distributor onboarding.
 
 **Distributor status:**
 - TD Synnex eSolutions — ✅ Active (PO-driven SOAP/XML sync running)
@@ -18,9 +18,24 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 **Next priorities:**
 1. Ingram Micro: add "Order Management v6" to API Catalog in Ingram portal, then test connection
 2. Obtain Dell Premier OAuth2 credentials from Dell Premier portal
-3. Phase E: QuickBooks Online integration (receipt confirmation → QBO PO update)
-4. Implement Parent/Child client Locations tab (spec in `docs/product-spec.md`)
+3. Approve 1,379 standards drafts (bulk by section in Standards page)
+4. Phase E: QuickBooks Online integration (receipt confirmation → QBO PO update)
 5. UI actionability pass — pop-up cards + dashboard widgets (see CHANGELOG 2026-04-22)
+
+**Recently shipped (2026-04-24):**
+- **Orders QA widgets** — PO Not Written to AT + Multi-Distributor Opps tiles with reconciliation (`src/routes/orders.js` qa/* endpoints, `Orders.jsx` widgets)
+- **Part-overlap SKU filter** — orderMatcher excludes Labor-*, Cabling-*, Shipping, Freight from match confidence (prevents false matches from quote boilerplate)
+- **Response modes on standards** — binary/ternary/graded/informational classification; reduced responses 6,935→4,376 for imported drafts
+- **Framework Gap Assessment** — new `assessment_type='framework_gap'` pulls only standards tagged with the selected framework (CMMC/ISO/PCI/HIPAA/NIST)
+- **Answer inheritance** — any new assessment auto-pre-fills response from most recent prior assessment for same `(client, standard)`; violet "↩ Inherited" badge
+- **Evidence examples** (text[] on standards) — topic-matched compliance artifacts
+- **Cross-framework badges** — assessment items show all framework tags (e.g. one MFA standard shows CMMC + NIST + ISO + PCI + HIPAA)
+- **Resolve:** SettingsShell and AdminShell now expose the other shell's nav when user is global_admin (symmetric nav)
+- **Infra:** pm2-logrotate installed; truncated 11.6GB of bloat that caused 2026-04-23 disk-full → M365 SSO outage
+
+**Recently shipped (2026-04-23):**
+- Richer order detail card (created timestamp, full ship-to block, multi-tracking, long descriptions)
+- Predictive PO Mapper — 5-strategy suggestion list with confidence + human-readable reasons
 
 **Recently shipped (2026-04-22):**
 - Opportunities sync fixes: pagination 405-retry bug fixed, batch quotes (952 synced in 2 pages vs 2,271 calls), incremental quote items, `forceSince` bypass parameter, `assigned_resource_name` from AT Resources API
@@ -35,8 +50,10 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 ## 📦 Parked — resume when ready
 
 - **Approve 1,379 imported standards drafts** in the Standards page UI. Bulk-approve by section is fastest. CMMC / PCI-DSS / ISO sections are safe to bulk-approve (authoritative content), NIST CSF + HIPAA deserve closer review.
-- **Second-pass dedup review complete** — 1 very-likely + 7 probable merges executed; 16 possible (75-79%) still in `/tmp/standards_import/dedup_second_pass.md` if you want a third pass.
-- **Re-sync opportunities** to backfill `assigned_resource_name` for existing 2,271 records (sync now captures owner name; existing rows need a full re-sync pass).
+- **Remaining dedup candidates** — 18 probable (80-89%) + 16 possible (75-79%) pairs in `/tmp/standards_import/dedup_second_pass.md`. 1 very-likely executed 2026-04-24 (ISO A.5.24 Incident Response).
+- **Broad auto-mapping** — only 3 of 99 clients have `client_standards` rows. Run `POST /api/standards/auto-map-all` after drafts are approved.
+- **Re-sync opportunities** to backfill `assigned_resource_name` — DB shows 0 / 2,272 have owner name populated even though sync code supports it (run a full forceSince pass).
+- **Parent/Child Locations tab** — 7 child clients already exist in DB; spec in `docs/product-spec.md`.
 
 ## 💾 Backups
 
