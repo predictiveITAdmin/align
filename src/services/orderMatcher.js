@@ -178,62 +178,230 @@ async function applyMatch(orderId, opportunityId, clientId, matchStatus, matchMe
   )
 }
 
-// ─── getMatchSuggestions — dry-run matcher + search for PO mapper UI ─────────
+// ─── getMatchSuggestions — predictive groups + search for PO Mapper UI ───────
 /**
- * Returns top candidate opportunities for a given order without writing to DB.
- * Used by the PO Mapper UI to show suggestions before the user confirms.
+ * Returns candidate opportunities for a given order, grouped by strategy.
+ * Strategies (in priority order when no search query is supplied):
+ *   1. po_exact       — order PO is in opp.po_numbers[]                (conf 100)
+ *   2. po_fuzzy       — normalized PO equality                         (conf 80)
+ *   3. part_overlap   — order's mfg_part_numbers overlap with an
+ *                       opp's quote_items.mfg_part_number               (conf 50–90)
+ *   4. date_proximity — opp.closed_date within ±30 days of order_date  (conf 30–70)
+ *   5. client_name    — ship_to_name fuzzy-matches a client's name     (conf 30–60)
+ *
+ * When `searchQuery` is supplied, returns cross-field search results only
+ * (title / client name / PO / quote number), so the user can map *any* opp.
+ *
+ * Each suggestion carries `match_method`, `match_reason` (human-readable),
+ * and `confidence` for the UI to render grouped cards.
  */
+const PROXIMITY_DAYS = 30
+const PART_OVERLAP_LIMIT = 8
+const DATE_PROXIMITY_LIMIT = 8
+const CLIENT_NAME_LIMIT = 6
+const SEARCH_LIMIT = 20
+
 async function getMatchSuggestions(tenantId, orderId, searchQuery = null) {
   const orderRes = await db.query(
-    `SELECT id, po_number, ship_to_name, ship_to_address
+    `SELECT id, po_number, ship_to_name, ship_to_address, order_date, client_id
      FROM distributor_orders WHERE id = $1 AND tenant_id = $2`,
     [orderId, tenantId]
   )
   if (!orderRes.rows.length) return []
-
   const order = orderRes.rows[0]
-  const suggestions = []
-  const seenIds = new Set()
 
-  // If explicit search query, look for matching opportunities first
-  if (searchQuery) {
+  // ── Search mode ────────────────────────────────────────────────────────────
+  if (searchQuery && searchQuery.trim().length > 0) {
+    const q = `%${searchQuery.trim()}%`
     const searchRes = await db.query(
       `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
-              c.name AS client_name
+              o.created_date, o.closed_date, o.expected_close,
+              c.name AS client_name,
+              (SELECT string_agg(DISTINCT qt.quote_number, ', ')
+                 FROM quotes qt WHERE qt.opportunity_id = o.id) AS quote_numbers
        FROM opportunities o
        LEFT JOIN clients c ON c.id = o.client_id
        WHERE o.tenant_id = $1
-         AND (o.title ILIKE $2 OR c.name ILIKE $2
-              OR EXISTS (SELECT 1 FROM unnest(o.po_numbers) p WHERE p ILIKE $2))
-       ORDER BY o.created_date DESC
-       LIMIT 10`,
-      [tenantId, `%${searchQuery}%`]
+         AND (o.title ILIKE $2
+              OR c.name ILIKE $2
+              OR EXISTS (SELECT 1 FROM unnest(o.po_numbers) p WHERE p ILIKE $2)
+              OR EXISTS (SELECT 1 FROM quotes qt
+                          WHERE qt.opportunity_id = o.id
+                            AND (qt.title ILIKE $2 OR qt.quote_number::text ILIKE $2)))
+       ORDER BY COALESCE(o.created_date, o.closed_date) DESC NULLS LAST
+       LIMIT $3`,
+      [tenantId, q, SEARCH_LIMIT]
     )
-    for (const row of searchRes.rows) {
-      if (!seenIds.has(row.id)) {
-        seenIds.add(row.id)
-        suggestions.push({ ...row, match_method: 'search', confidence: null })
+    return searchRes.rows.map(row => ({
+      ...row,
+      match_method: 'search',
+      match_reason: `Search match`,
+      confidence: null,
+    }))
+  }
+
+  // ── Predictive mode ────────────────────────────────────────────────────────
+  const itemsRes = await db.query(
+    `SELECT mfg_part_number FROM distributor_order_items
+     WHERE distributor_order_id = $1
+       AND mfg_part_number IS NOT NULL AND mfg_part_number <> ''`,
+    [orderId]
+  )
+  const orderParts = [...new Set(itemsRes.rows.map(r => r.mfg_part_number.trim()).filter(Boolean))]
+  const totalParts = orderParts.length
+
+  const suggestions = []
+  const seenIds = new Set()
+
+  const pushIfNew = (row, extras) => {
+    if (seenIds.has(row.id)) return
+    seenIds.add(row.id)
+    suggestions.push({ ...row, ...extras })
+  }
+
+  // ── Strategy 1: PO exact ───────────────────────────────────────────────────
+  if (order.po_number) {
+    const exactRes = await db.query(
+      `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
+              o.created_date, o.closed_date, o.expected_close,
+              c.name AS client_name
+         FROM opportunities o
+         LEFT JOIN clients c ON c.id = o.client_id
+        WHERE o.tenant_id = $1 AND $2 = ANY(o.po_numbers)
+        LIMIT 3`,
+      [tenantId, order.po_number]
+    )
+    for (const row of exactRes.rows) {
+      pushIfNew(row, {
+        match_method: 'po_exact',
+        match_reason: `PO ${order.po_number} exact match`,
+        confidence: 100,
+      })
+    }
+  }
+
+  // ── Strategy 2: PO fuzzy ───────────────────────────────────────────────────
+  const normPo = normalizePo(order.po_number)
+  if (normPo.length >= 3) {
+    const oppsRes = await db.query(
+      `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
+              o.created_date, o.closed_date, o.expected_close,
+              c.name AS client_name
+         FROM opportunities o
+         LEFT JOIN clients c ON c.id = o.client_id
+        WHERE o.tenant_id = $1 AND cardinality(o.po_numbers) > 0
+        LIMIT 2000`,
+      [tenantId]
+    )
+    for (const row of oppsRes.rows) {
+      const matchedPo = (row.po_numbers || []).find(p => normalizePo(p) === normPo)
+      if (matchedPo && matchedPo !== order.po_number) {
+        pushIfNew(row, {
+          match_method: 'po_fuzzy',
+          match_reason: `Similar PO (${matchedPo})`,
+          confidence: 80,
+        })
       }
     }
   }
 
-  // Add auto-match result if any
-  const autoMatch = await matchOrder(tenantId, orderId, { force: true, dryRun: true })
-  if (autoMatch.opportunity_id && !seenIds.has(autoMatch.opportunity_id)) {
-    seenIds.add(autoMatch.opportunity_id)
-    const oppRes = await db.query(
+  // ── Strategy 3: Part-number overlap ────────────────────────────────────────
+  if (orderParts.length) {
+    const partsRes = await db.query(
       `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
-              c.name AS client_name
-       FROM opportunities o LEFT JOIN clients c ON c.id = o.client_id
-       WHERE o.id = $1`,
-      [autoMatch.opportunity_id]
+              o.created_date, o.closed_date, o.expected_close,
+              c.name AS client_name,
+              COUNT(DISTINCT qi.mfg_part_number)                      AS matched_count,
+              ARRAY_AGG(DISTINCT qi.mfg_part_number)                  AS matched_parts
+         FROM opportunities o
+         JOIN quotes q       ON q.opportunity_id = o.id
+         JOIN quote_items qi ON qi.quote_id = q.id
+         LEFT JOIN clients c ON c.id = o.client_id
+        WHERE o.tenant_id = $1
+          AND qi.mfg_part_number = ANY($2::text[])
+        GROUP BY o.id, c.name
+        ORDER BY matched_count DESC, o.created_date DESC NULLS LAST
+        LIMIT $3`,
+      [tenantId, orderParts, PART_OVERLAP_LIMIT]
     )
-    if (oppRes.rows.length) {
-      suggestions.unshift({
-        ...oppRes.rows[0],
-        match_method: autoMatch.method,
-        confidence: autoMatch.confidence,
+    for (const row of partsRes.rows) {
+      const matchedCount = Number(row.matched_count) || 0
+      if (matchedCount === 0) continue
+      const ratio = matchedCount / Math.max(totalParts, 1)
+      const confidence = Math.min(90, Math.round(50 + 40 * ratio))
+      pushIfNew(row, {
+        match_method: 'part_overlap',
+        match_reason: `${matchedCount} of ${totalParts} part${totalParts === 1 ? '' : 's'} match`,
+        confidence,
+        matched_parts: row.matched_parts,
+        match_count: matchedCount,
+        total_parts: totalParts,
       })
+    }
+  }
+
+  // ── Strategy 4: Closed near order date ─────────────────────────────────────
+  if (order.order_date) {
+    const proxRes = await db.query(
+      `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
+              o.created_date, o.closed_date, o.expected_close,
+              c.name AS client_name,
+              ABS(EXTRACT(EPOCH FROM (o.closed_date - $2::timestamptz)) / 86400)::int AS day_distance
+         FROM opportunities o
+         LEFT JOIN clients c ON c.id = o.client_id
+        WHERE o.tenant_id = $1
+          AND o.closed_date IS NOT NULL
+          AND o.closed_date BETWEEN $2::timestamptz - ($3 || ' days')::interval
+                                AND $2::timestamptz + ($3 || ' days')::interval
+        ORDER BY ABS(EXTRACT(EPOCH FROM (o.closed_date - $2::timestamptz))) ASC
+        LIMIT $4`,
+      [tenantId, order.order_date, PROXIMITY_DAYS, DATE_PROXIMITY_LIMIT]
+    )
+    for (const row of proxRes.rows) {
+      const days = Number(row.day_distance) || 0
+      const dir = new Date(row.closed_date) < new Date(order.order_date) ? 'before' : 'after'
+      const confidence = Math.max(30, 70 - days)
+      pushIfNew(row, {
+        match_method: 'date_proximity',
+        match_reason: `Closed ${days} day${days === 1 ? '' : 's'} ${dir} order date`,
+        confidence,
+      })
+    }
+  }
+
+  // ── Strategy 5: Same client (ship_to_name fuzzy) ───────────────────────────
+  const shipName = order.ship_to_name
+  if (shipName && shipName.trim().length > 2) {
+    const clientsRes = await db.query(
+      `SELECT id, name FROM clients WHERE tenant_id = $1 LIMIT 2000`,
+      [tenantId]
+    )
+    let bestScore = 0
+    let bestClient = null
+    for (const c of clientsRes.rows) {
+      const score = nameSimilarity(shipName, c.name)
+      if (score > bestScore) { bestScore = score; bestClient = c }
+    }
+    if (bestClient && bestScore >= 0.5) {
+      const clientOppsRes = await db.query(
+        `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
+                o.created_date, o.closed_date, o.expected_close,
+                c.name AS client_name
+           FROM opportunities o
+           LEFT JOIN clients c ON c.id = o.client_id
+          WHERE o.tenant_id = $1 AND o.client_id = $2
+          ORDER BY o.created_date DESC NULLS LAST
+          LIMIT $3`,
+        [tenantId, bestClient.id, CLIENT_NAME_LIMIT]
+      )
+      const confidence = Math.round(30 + 30 * bestScore)
+      for (const row of clientOppsRes.rows) {
+        pushIfNew(row, {
+          match_method: 'client_name',
+          match_reason: `Same client: ${bestClient.name}`,
+          confidence,
+        })
+      }
     }
   }
 

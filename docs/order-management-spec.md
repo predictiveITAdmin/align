@@ -266,16 +266,44 @@ Global page: `/orders/unmapped` (accessible from badge on global Orders page)
 Layout:
 - Left pane: list of unmapped / needs-review orders (sorted by date desc)
 - Right pane: selected order detail
-  - Distributor info (name, order ID, PO, total, ship-to)
-  - Line items (SKU, qty, description)
-  - **Match suggestions** (automated candidates ranked by confidence)
+  - Distributor info (name, order ID, PO, total, ship-to full address,
+    order date + sync-created timestamp)
+  - Line items (SKU, qty, description, long-description, clickable
+    multi-package tracking numbers)
+  - **Predictive match list** — grouped suggestions (see next section)
   - **Manual search** — pick any client + opportunity via autocomplete
+    (covers opp title, client name, PO, quote # and quote title)
   - **"Map" button** — on confirm:
     1. Writes `opportunity_id`, `quote_id`, `client_id`, `match_method='manual'`
     2. **Appends PO to Autotask Opportunity's PO field** (comma-separated)
        via Autotask API `PATCH /Opportunities/:id`
     3. Writes `order_events` row: `po_mapped` with actor + timestamp
     4. Line item matcher runs for the newly linked order (SKU → quote_item)
+
+### Predictive match list (shipped 2026-04-23)
+
+`GET /api/orders/:id/match-suggestions` returns a flat array of candidate
+opportunities, each row tagged with `match_method`, a human `match_reason`,
+and a `confidence` score (0–100). The UI groups by `match_method` into
+labeled sections so the user sees *why* an opp surfaced.
+
+| Group | Method key | Query | Confidence |
+|---|---|---|---|
+| Exact PO match | `po_exact` | `order.po_number ∈ opp.po_numbers[]` | 100 |
+| Similar PO | `po_fuzzy` | normalized PO equality (strip `PO-`, `#`, spaces) | 80 |
+| **Part numbers match** | `part_overlap` | `distributor_order_items.mfg_part_number` ∩ `quote_items.mfg_part_number`, grouped by opp | 50–90 (scales with match ratio) |
+| **Closed near order date** | `date_proximity` | `opp.closed_date` within ±30 days of `order.order_date` | 30–70 (decays with day-distance) |
+| Same client | `client_name` | ship_to_name fuzzy ≥ 0.5 → pull that client's recent opps | 30–60 |
+
+When the user types in the search box the predictive groups are hidden and
+the API returns `match_method='search'` rows covering `opp.title`,
+`client.name`, `opp.po_numbers[]`, `quote.title`, and `quote.quote_number`.
+
+Why this matters: QuoteWerks-originated POs are often entered into the
+distributor portal *after* the opp has already been closed-won, so the old
+"PO only" auto-matcher missed them. Part-number and date-proximity surface
+the right opp even when PO was typed inconsistently or the opp closed
+before the distributor order landed.
 
 ### Manual unmap / re-map
 
