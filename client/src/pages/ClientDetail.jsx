@@ -4984,8 +4984,108 @@ const TAB_KEY_MAP = {
   'Assessments': 'assessments', 'Contacts': 'contacts', 'SaaS Licenses': 'saas-licenses',
   'Roadmap': 'roadmap', 'Budget': 'budget', 'Software': 'software',
   'Goals': 'goals', 'Activities': 'activities', 'Profile': 'profile', 'Standards': 'standards',
+  'Locations': 'locations',
   'Procurement': 'procurement-opps', 'Opportunities': 'procurement-opps',
   'Quotes': 'procurement-quotes', 'Orders': 'procurement-orders',
+}
+
+// ─── Tab: Locations (Parent/Child) ────────────────────────────────────────────
+function LocationsTab({ clientId, client }) {
+  const navigate = useNavigate()
+  const [locations, setLocations] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    api.get(`/clients/${clientId}/locations`)
+      .then(r => setLocations(r.data || []))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [clientId])
+
+  if (loading) return <div className="text-center py-12 text-gray-400">Loading locations...</div>
+
+  const isChild = !!client.parent_id
+
+  return (
+    <div>
+      {isChild && (
+        <div className="bg-primary-50 border border-primary-100 rounded-xl p-4 mb-5 flex items-center gap-3">
+          <MapPin size={18} className="text-primary-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-primary-700 uppercase tracking-wider font-semibold">This is a Location</p>
+            <p className="text-sm text-gray-700 mt-0.5">
+              Part of <Link to={`/clients/${client.parent_id}`} className="font-semibold text-primary-700 hover:underline">{client.parent_name}</Link>
+            </p>
+          </div>
+          {client.parent_autotask_company_id && (
+            <a href={autotaskUrl('company', client.parent_autotask_company_id)} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-primary-600 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 shrink-0">
+              <ExternalLink size={12} /> Parent in Autotask
+            </a>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Locations</h2>
+          <p className="text-sm text-gray-500">
+            {locations.length === 0
+              ? (isChild ? 'Sibling locations not shown here — view the parent to see all locations.' : 'This client has no child locations.')
+              : `${locations.length} location${locations.length === 1 ? '' : 's'} under ${client.name}`}
+          </p>
+        </div>
+      </div>
+
+      {locations.length === 0 ? (
+        <div className="text-center py-16 bg-white border border-gray-200 rounded-xl">
+          <MapPin size={32} className="mx-auto mb-3 text-gray-300" />
+          <p className="text-sm text-gray-400">
+            {isChild ? 'No sibling locations listed here.' : 'No child locations linked to this client.'}
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            Locations sync from Autotask parent/child company relationships.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {locations.map(loc => {
+            const score = loc.health_score
+            const scoreColor = score == null ? 'text-gray-400' : score >= 75 ? 'text-green-600' : score >= 50 ? 'text-amber-600' : 'text-red-600'
+            return (
+              <div key={loc.id}
+                onClick={() => navigate(`/clients/${loc.id}`)}
+                className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-primary-200 hover:shadow-sm cursor-pointer transition-all group">
+                <div className="w-10 h-10 bg-primary-100 text-primary-700 rounded-lg flex items-center justify-center font-bold text-sm shrink-0">
+                  {loc.name?.charAt(0)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 group-hover:text-primary-700 transition-colors">{loc.name}</p>
+                  <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+                    {loc.autotask_company_id && <span>AT #{loc.autotask_company_id}</span>}
+                    {loc.city && loc.state && <span>· {loc.city}, {loc.state}</span>}
+                    {loc.is_active === false && <span className="text-red-500">· Inactive</span>}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Assets</p>
+                  <p className="text-sm font-semibold text-gray-700">{loc.asset_count || 0}</p>
+                </div>
+                {score != null && (
+                  <div className="text-right shrink-0 w-16">
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wider">Align</p>
+                    <p className={`text-sm font-bold ${scoreColor}`}>{score}</p>
+                  </div>
+                )}
+                <ChevronRight size={16} className="text-gray-300 group-hover:text-primary-400 transition-colors shrink-0" />
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -5019,6 +5119,7 @@ export default function ClientDetail() {
     assessments: 'Assessments', recommendations: 'Recommendations', contacts: 'Contacts',
     hardware: 'Hardware', software: 'Software', 'saas-licenses': 'SaaS Licenses',
     activities: 'Activities', profile: 'Profile', standards: 'Standards',
+    locations: 'Locations',
     'procurement-opps': 'Procurement · Opportunities',
     'procurement-quotes': 'Procurement · Quotes',
     'procurement-orders': 'Procurement · Orders',
@@ -5045,6 +5146,14 @@ export default function ClientDetail() {
             <p className="text-xs text-gray-400 mt-0.5">
               {client.autotask_company_id && `AT #${client.autotask_company_id}`}
               {client.city && client.state && ` · ${client.city}, ${client.state}`}
+              {client.parent_id && (
+                <> · Part of <Link to={`/clients/${client.parent_id}`} className="text-primary-500 hover:text-primary-700 hover:underline">{client.parent_name}</Link></>
+              )}
+              {!client.parent_id && parseInt(client.location_count) > 0 && (
+                <> · <button onClick={() => setActiveTab('locations')} className="text-primary-500 hover:text-primary-700 hover:underline">
+                  {client.location_count} location{parseInt(client.location_count) === 1 ? '' : 's'}
+                </button></>
+              )}
             </p>
           </div>
         </div>
@@ -5076,6 +5185,7 @@ export default function ClientDetail() {
       {activeTab === 'saas-licenses'   && <LicensesTab clientId={id} />}
       {activeTab === 'profile'              && <ProfileTab clientId={id} client={client} onClientUpdate={setClient} />}
       {activeTab === 'standards'            && <ClientStandardsTab clientId={id} client={client} />}
+      {activeTab === 'locations'            && <LocationsTab clientId={id} client={client} />}
       {activeTab === 'procurement-opps'     && <ClientOpportunitiesTab clientId={id} />}
       {activeTab === 'procurement-quotes'   && <ClientQuotesTab clientId={id} />}
       {activeTab === 'procurement-orders'   && <ClientOrdersTab clientId={id} />}

@@ -57,8 +57,13 @@ router.get('/:id', async (req, res) => {
            NULLIF(count(*), 0) * 100), 0
         ) FROM csat_responses cr WHERE cr.client_id = c.id) as csat_score,
         (SELECT count(*) FROM csat_responses cr WHERE cr.client_id = c.id) as csat_total,
-        (SELECT count(*) FROM saas_licenses sl WHERE sl.client_id = c.id) as license_count
+        (SELECT count(*) FROM saas_licenses sl WHERE sl.client_id = c.id) as license_count,
+        (SELECT count(*) FROM clients cc WHERE cc.parent_client_id = c.id) as location_count,
+        p.id   AS parent_id,
+        p.name AS parent_name,
+        p.autotask_company_id AS parent_autotask_company_id
       FROM clients c
+      LEFT JOIN clients p ON p.id = c.parent_client_id
       WHERE c.id = $1 AND c.tenant_id = $2`,
       [req.params.id, req.tenant.id]
     )
@@ -67,6 +72,44 @@ router.get('/:id', async (req, res) => {
   } catch (err) {
     console.error('[clients] detail error:', err.message)
     res.status(500).json({ error: 'Failed to fetch client' })
+  }
+})
+
+// GET /api/clients/:id/locations — list child locations for a parent client
+router.get('/:id/locations', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT c.id, c.name, c.autotask_company_id, c.city, c.state,
+              c.is_active, c.health_score, c.last_assessment_date,
+              (SELECT count(*) FROM assets a WHERE a.client_id = c.id) AS asset_count,
+              (SELECT count(*) FROM contracts ct WHERE ct.client_id = c.id AND ct.status = 'active') AS active_contract_count
+         FROM clients c
+        WHERE c.parent_client_id = $1 AND c.tenant_id = $2
+        ORDER BY c.name`,
+      [req.params.id, req.tenant.id]
+    )
+    res.json({ data: r.rows })
+  } catch (err) {
+    console.error('[clients] locations error:', err.message)
+    // If contracts table doesn't exist, fall back without that column
+    if (err.message.includes('contracts')) {
+      try {
+        const r = await db.query(
+          `SELECT c.id, c.name, c.autotask_company_id, c.city, c.state,
+                  c.is_active, c.health_score, c.last_assessment_date,
+                  (SELECT count(*) FROM assets a WHERE a.client_id = c.id) AS asset_count,
+                  0 AS active_contract_count
+             FROM clients c
+            WHERE c.parent_client_id = $1 AND c.tenant_id = $2
+            ORDER BY c.name`,
+          [req.params.id, req.tenant.id]
+        )
+        return res.json({ data: r.rows })
+      } catch (err2) {
+        return res.status(500).json({ error: err2.message })
+      }
+    }
+    res.status(500).json({ error: err.message })
   }
 })
 

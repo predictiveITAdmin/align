@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Building2, ShieldCheck, BookOpen, ClipboardList,
   Monitor, Map, DollarSign, Target, BarChart3, FileText, Settings,
   ChevronLeft, ChevronRight, ChevronDown, Package, AppWindow,
-  Users, CheckSquare, UserCog, ListChecks, ShoppingCart,
+  Users, CheckSquare, UserCog, ListChecks, ShoppingCart, MapPin,
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '../lib/cn'
@@ -42,6 +42,7 @@ const clientNavItems = [
   { tab: 'assessments',     icon: ShieldCheck,     label: 'Assessments' },
   { tab: 'recommendations', icon: ClipboardList,   label: 'Recommendations' },
   { tab: 'contacts',        icon: Users,           label: 'Contacts' },
+  { tab: 'locations',       icon: MapPin,          label: 'Locations' },
   { tab: 'activities',      icon: CheckSquare,     label: 'Activities' },
   { tab: 'profile',         icon: UserCog,         label: 'Profile' },
   { tab: 'standards',       icon: ListChecks,      label: 'Standards' },
