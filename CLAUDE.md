@@ -15,12 +15,32 @@ Strategic IT Alignment Platform for MSPs (vCIO/TAM/vCISO workflows): standards, 
 - Amazon Business — ✅ CSV import active
 - Provantage — ✅ Manual entry active
 
-**Next priorities:**
-1. Ingram Micro: add "Order Management v6" to API Catalog in Ingram portal, then test connection
-2. Obtain Dell Premier OAuth2 credentials from Dell Premier portal
-3. Approve 1,379 standards drafts (bulk by section in Standards page)
-4. Phase E: QuickBooks Online integration (receipt confirmation → QBO PO update)
-5. UI actionability pass — pop-up cards + dashboard widgets (see CHANGELOG 2026-04-22)
+**Next priorities (updated 2026-04-24 with nav/UX overhaul):**
+1. **Nav redesign + header search fix** — sidebar reorg + Dashboard tab
+   bar + header search centering (fixes logo + sidebar overlap bug).
+   Spec: [`docs/navigation-redesign.md`](./docs/navigation-redesign.md).
+   Effort: 1-2 days.
+2. **Document Repository** — upload LMX/MyITP reference reports at
+   tenant + client level so the vCIO has polished deliverables today.
+   Ships before full Deliverables module. Spec:
+   [`docs/document-repository-spec.md`](./docs/document-repository-spec.md).
+   Effort: 1-2 days.
+3. **Roadmap page redesign** (Kanban + List + drag/drop, LMX-parity).
+   Spec: [`docs/roadmap-redesign.md`](./docs/roadmap-redesign.md).
+   Effort: 3-5 days.
+4. **MVP Deliverables** (Word/PDF/Excel export for Assessment/Budget/
+   Roadmap). Spec:
+   [`docs/deliverables-spec.md`](./docs/deliverables-spec.md).
+   Effort: 2-3 days.
+5. **Parent/Child Client Rollup** — enterprise view on parent Dashboard.
+   Spec: [`docs/parent-child-rollup.md`](./docs/parent-child-rollup.md).
+   Effort: 3-4 days.
+6. Approve 1,379 standards drafts (bulk by section in Standards page
+   — button already exists).
+7. Ingram Micro: add "Order Management v6" to API Catalog in Ingram portal, then test connection.
+8. Obtain Dell Premier OAuth2 credentials from Dell Premier portal.
+9. Phase E: QuickBooks Online integration (receipt confirmation → QBO PO update).
+10. UI actionability pass — pop-up cards + dashboard widgets (see CHANGELOG 2026-04-22).
 
 **Recently shipped (2026-04-24):**
 - **Orders QA widgets** — PO Not Written to AT + Multi-Distributor Opps tiles with reconciliation (`src/routes/orders.js` qa/* endpoints, `Orders.jsx` widgets)

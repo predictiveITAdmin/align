@@ -207,13 +207,62 @@ Pull warranty and support contract data directly from vendor portals/APIs to sur
 
 ---
 
+### UX / Navigation Overhaul — Priority
+
+These are grouped together because they're interlocking — the Dashboard
+tab bar only lands well on top of the new sidebar; the Roadmap redesign
+depends on both; Deliverables surfaces under ENGAGE in the new sidebar.
+Full specs linked.
+
+#### Nav redesign + header search fix → [`docs/navigation-redesign.md`](docs/navigation-redesign.md)
+Sidebar reorganized around workflows (DISCOVER / PLAN / ENGAGE /
+PROCUREMENT / MANAGE). Global sidebar DISCOVER renamed to LIBRARY.
+Dashboard horizontal tab bar (Overview / Client IQ / Analytics /
+Action Items / Notes) matching LMX layout. Assessments sub-tabs
+(Assessments / Standards / Profile). Profile becomes a pop-up that
+auto-opens on unconfigured clients. Header search centered to fix
+the 768-1000px viewport overlap bug. **Effort: 1-2 days.**
+
+#### Roadmap page redesign (Kanban + List + drag/drop) → [`docs/roadmap-redesign.md`](docs/roadmap-redesign.md)
+Toggle between Kanban (drag-drop cards between quarterly columns) and
+List view (sortable/filterable table grouped by quarter). Per-column
+financial rollups (one-time, monthly, annualized). Share-with-client
+signed URL. New Initiative modal with fee schedule. Year navigator +
+fiscal-year config. LMX-parity visual layout. **Effort: 3-5 days.**
+
+#### MVP Deliverables (Word/PDF/Excel) → [`docs/deliverables-spec.md`](docs/deliverables-spec.md)
+One-click export of Assessment (Word/PDF), Budget (Word/PDF/Excel),
+and Roadmap (Word/PDF/Excel). Puppeteer for PDF (print-mode CSS on
+existing pages), `docx` library for Word, `exceljs` for Excel.
+Lives at ENGAGE > Deliverables under each client. **Effort: 2-3 days.**
+
+Full Scheduled Reports module (templates, cron, email delivery) parked
+until MVP usage validates the format.
+
+#### Document Repository → [`docs/document-repository-spec.md`](docs/document-repository-spec.md)
+Ships **before** MVP Deliverables matures — gives the vCIO a place to
+upload polished LMX/MyITProcess example reports for client meetings
+while Align's native exports are still being built. Tenant-level
+(global sidebar MANAGE > Documents) and client-level (client sidebar
+MANAGE > Documents) upload/list UI. New `documents` table, multer
+file upload, 50 MB per file / 500 MB per tenant quota. Supported:
+PDF, Word, Excel, PowerPoint, images. **Effort: 1-2 days. Ship first.**
+
+#### Parent/Child Client Rollup → [`docs/parent-child-rollup.md`](docs/parent-child-rollup.md)
+Scope toggle on parent Dashboard: Enterprise (data rolled up across
+all child locations) vs. Location breakdown (per-location tabs).
+Applies to assets, recommendations, initiatives, goals, action items,
+agreements. Exports accept `enterprise=1` flag for consolidated or
+per-location rollups. Schema exists (`parent_client_id`), 7 children
+already in DB. **Effort: 3-4 days.**
+
 ### Other Planned Features
 
 #### Budget Board — Fiscal Period View
 Recommendations displayed by year + quarter with budget rollups per period. Drag-and-drop scheduling.
 
 #### TipTap Rich Text Editors
-Wire `@tiptap/react` (already installed) into assessment note textareas and recommendation executive summary.
+Wire `@tiptap/react` (already installed) into assessment note textareas, recommendation executive summary, and the new Notes tab on client Dashboard (see `docs/navigation-redesign.md`).
 
 #### Ticket Creation — Assessment Items
 "Create Ticket" button on assessment items (currently placeholder) — create Autotask ticket linked to the specific finding with pre-filled description and priority.
@@ -224,11 +273,23 @@ Link quotes to recommendations from the PSA Opportunity modal. Placeholder in Re
 #### Scheduled Review Notifications
 Email alerts for standards due for review based on `next_review_due`. Use existing Resend/nodemailer setup.
 
-#### Client-Facing Report Generation
-PDF export of assessment results, recommendations, and roadmap for client delivery.
+#### Client-Facing Report Generation (Full)
+See `docs/deliverables-spec.md` "Future (after MVP)" section — template
+designer, scheduled generation, email delivery, co-branded templates.
+MVP one-click exports ship first.
 
 #### Pax8 Credential Onboarding UI
 Settings page section for Pax8 API credentials (OAuth client ID + secret), connection test button.
+
+#### RocketCyber Integration
+Security module data source — pull posture data into assessments.
+
+#### TPRA (Third-Party Risk Assessment)
+Spec'd but not built — vendor inventory + assessment flow.
+
+#### Phase 4 Review Cycle Dashboard
+Standalone page for review cycle engine (already built + endpoint
+exists); currently only surfaced in client detail.
 
 ---
 
