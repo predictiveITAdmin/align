@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle, ExternalLink,
+  X, Search, Loader2, Inbox, Link2, Link2Off, AlertTriangle, ExternalLink, CheckCircle2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 
@@ -328,8 +328,9 @@ function POMapperModal({ order, onClose, onMapped }) {
 export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOppClick }) {
   const [order, setOrder]     = useState(null)
   const [loading, setLoading] = useState(true)
-  const [showMapper, setShowMapper] = useState(false)
-  const [unmapping, setUnmapping]   = useState(false)
+  const [showMapper, setShowMapper]       = useState(false)
+  const [unmapping, setUnmapping]         = useState(false)
+  const [markingDelivered, setMarkingDelivered] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -349,6 +350,21 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
       onClose()
     } catch {
       setUnmapping(false)
+    }
+  }
+
+  async function handleMarkDelivered() {
+    setMarkingDelivered(true)
+    try {
+      await api.post(`/orders/${orderId}/mark-delivered`)
+      onRefresh?.()
+      // Reload this order
+      const r = await api.get(`/orders/${orderId}`)
+      setOrder(r.data)
+    } catch {
+      // ignore
+    } finally {
+      setMarkingDelivered(false)
     }
   }
 
@@ -443,7 +459,14 @@ export default function OrderDetailSlideOver({ orderId, onClose, onRefresh, onOp
                 </>)}
               </div>
               {/* Action buttons */}
-              <div className="flex gap-2 mt-4">
+              <div className="flex flex-wrap gap-2 mt-4">
+                {['shipped','partially_shipped','out_for_delivery'].includes(order.status) && (
+                  <button onClick={handleMarkDelivered} disabled={markingDelivered}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-green-200 text-green-700 bg-green-50 text-sm rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50">
+                    {markingDelivered ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                    {markingDelivered ? 'Updating…' : 'Mark Delivered'}
+                  </button>
+                )}
                 {order.match_status !== 'matched' && (
                   <button onClick={() => setShowMapper(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 transition-colors">

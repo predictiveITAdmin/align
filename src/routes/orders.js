@@ -7,7 +7,7 @@ const db = require('../db')
 const { requireAuth, requireRole } = require('../middleware/auth')
 const opportunitiesSync = require('../services/opportunitiesSync')
 const { matchAllUnmatched, getMatchSuggestions } = require('../services/orderMatcher')
-const { syncAllSuppliers } = require('../services/distributorSync')
+const { syncAllSuppliers, inferDeliveries } = require('../services/distributorSync')
 
 // Open-order statuses — everything that hasn't reached delivered/cancelled
 const OPEN_ORDER_STATUSES = ['submitted','confirmed','partially_shipped','shipped','backordered','out_for_delivery','exception']
@@ -181,6 +181,34 @@ router.post('/:id/map', requireAuth, requireRole('tenant_admin', 'vcio', 'tam', 
     res.json({ status: 'ok' })
   } catch (err) {
     console.error('[orders] map error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── POST /api/orders/:id/mark-delivered — manually mark a shipped order as delivered ──
+router.post('/:id/mark-delivered', requireAuth, requireRole('tenant_admin', 'vcio', 'tam', 'global_admin'), async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE distributor_orders
+          SET status = 'delivered', status_raw = 'Delivered (manual)', updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2
+          AND status IN ('shipped','partially_shipped','out_for_delivery')
+        RETURNING id, status`,
+      [req.params.id, req.tenant.id]
+    )
+    if (!r.rows.length) return res.status(404).json({ error: 'Order not found or not in a shipped state' })
+    res.json({ ok: true, status: r.rows[0].status })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── POST /api/orders/infer-deliveries — date-based delivery inference for all shipped orders ──
+router.post('/infer-deliveries', requireAuth, requireRole('tenant_admin', 'vcio', 'global_admin'), async (req, res) => {
+  try {
+    const updated = await inferDeliveries(req.tenant.id)
+    res.json({ ok: true, updated })
+  } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })

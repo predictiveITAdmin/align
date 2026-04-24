@@ -217,7 +217,59 @@ async function syncAllSuppliers(tenantId) {
     const result = await syncSupplier(supplier)
     results.push({ adapter_key: supplier.adapter_key, ...result })
   }
+
+  // After every sync, infer delivered status for shipped orders past carrier threshold
+  try {
+    const inferred = await inferDeliveries(tenantId)
+    if (inferred > 0) console.log(`[distributorSync] inferred ${inferred} delivered orders for tenant ${tenantId}`)
+  } catch (e) {
+    console.error('[distributorSync] inferDeliveries error:', e.message)
+  }
+
   return { ok: true, results }
 }
 
-module.exports = { syncAllSuppliers, syncSupplier, upsertOrder }
+// ─── inferDeliveries — flip shipped→delivered when past carrier transit threshold ──
+const CARRIER_DAYS = { ups:8, fedex:8, usps:14, dhl:10, ontrac:8, default:10 }
+function _carrierDays(carrier) {
+  if (!carrier) return CARRIER_DAYS.default
+  const c = carrier.toUpperCase()
+  if (c.includes('UPS'))    return CARRIER_DAYS.ups
+  if (c.includes('FEDEX'))  return CARRIER_DAYS.fedex
+  if (c.includes('USPS'))   return CARRIER_DAYS.usps
+  if (c.includes('DHL'))    return CARRIER_DAYS.dhl
+  if (c.includes('ONTRAC')) return CARRIER_DAYS.ontrac
+  return CARRIER_DAYS.default
+}
+
+async function inferDeliveries(tenantId) {
+  const res = await db.query(
+    `SELECT DISTINCT o.id,
+            MAX(doi.ship_date) AS latest_ship,
+            MAX(doi.carrier)   AS carrier
+       FROM distributor_orders o
+       JOIN distributor_order_items doi ON doi.distributor_order_id = o.id
+      WHERE o.tenant_id = $1
+        AND o.status IN ('shipped','partially_shipped','out_for_delivery')
+        AND doi.ship_date IS NOT NULL
+      GROUP BY o.id`,
+    [tenantId]
+  )
+  const now = new Date()
+  let updated = 0
+  for (const row of res.rows) {
+    const days = (now - new Date(row.latest_ship)) / 86400000
+    if (days >= _carrierDays(row.carrier)) {
+      await db.query(
+        `UPDATE distributor_orders
+            SET status = 'delivered', status_raw = 'Delivered (inferred)', updated_at = NOW()
+          WHERE id = $1`,
+        [row.id]
+      )
+      updated++
+    }
+  }
+  return updated
+}
+
+module.exports = { syncAllSuppliers, syncSupplier, upsertOrder, inferDeliveries }
