@@ -18,6 +18,21 @@
  */
 
 const db = require('../db')
+const opportunitiesSync = require('./opportunitiesSync')
+
+// ─── Internal service / shipping SKU patterns ─────────────────────────────────
+// These are NOT distributor parts. They appear only on quotes (for client billing)
+// and must be excluded when computing part-# overlap between quotes and distributor
+// orders. Otherwise, a quote with "Labor-Standard" + "Cabling-Project-Resale" could
+// falsely match an unrelated distributor order that also had a labor line from a
+// different quote.
+//
+// Regex operates on LOWER(TRIM(description)). Covers:
+//   - Labor-*, LABOR, labor, Smart-Labor (our internal labor SKUs)
+//   - Cabling-*, CABLING, cabling (internal cabling SKUs)
+//   - Installation, Install-* (install charges billed to client)
+//   - Shipping, Freight (we typically get free shipping, charge client separately)
+const INTERNAL_SKU_REGEX = '^(labor|smart-labor|cabling|installation|install|shipping|freight)[-\\s]?|^(shipping\\s*&\\s*handling)$'
 
 // ─── PO normalization ─────────────────────────────────────────────────────────
 function normalizePo(raw) {
@@ -176,6 +191,39 @@ async function applyMatch(orderId, opportunityId, clientId, matchStatus, matchMe
       JSON.stringify({ method: matchMethod, confidence, opportunity_id: opportunityId }),
     ]
   )
+
+  // For confirmed matches: write PO back to Autotask UDF + add note
+  if (matchStatus === 'matched') {
+    try {
+      const orderRow = await db.query(
+        `SELECT po_number, distributor_order_id, distributor FROM distributor_orders WHERE id = $1`,
+        [orderId]
+      )
+      const order = orderRow.rows[0]
+      if (order?.po_number) {
+        // Append PO to Autotask opportunity UDF (dedupe handled inside)
+        await opportunitiesSync.appendPoToAutotask(opportunityId, order.po_number).catch(err =>
+          console.warn(`[orderMatcher] AT PO writeback failed for opp ${opportunityId}:`, err.message)
+        )
+      }
+      // Add note to Autotask opportunity documenting the auto-match
+      const noteDesc = [
+        `Distributor order ${order?.distributor_order_id || orderId} was automatically linked to this opportunity by predictiveIT Align.`,
+        `Match method: ${matchMethod} (confidence: ${confidence}%)`,
+        order?.po_number ? `PO Number: ${order.po_number}` : null,
+        order?.distributor ? `Distributor: ${order.distributor}` : null,
+      ].filter(Boolean).join('\n')
+      await opportunitiesSync.createOpportunityNote(
+        opportunityId,
+        'Order auto-matched via Align sync',
+        noteDesc
+      ).catch(err =>
+        console.warn(`[orderMatcher] AT note failed for opp ${opportunityId}:`, err.message)
+      )
+    } catch (err) {
+      console.warn('[orderMatcher] AT writeback error (non-fatal):', err.message)
+    }
+  }
 }
 
 // ─── getMatchSuggestions — predictive groups + search for PO Mapper UI ───────
@@ -248,7 +296,14 @@ async function getMatchSuggestions(tenantId, orderId, searchQuery = null) {
     [orderId]
   )
   const orderParts = [...new Set(itemsRes.rows.map(r => r.mfg_part_number.trim()).filter(Boolean))]
-  const totalParts = orderParts.length
+  // Autotask stores actual SKUs in quote_items.description (not mfg_part_number which is an
+  // internal Autotask numeric ID). Compare lowercased to handle case differences.
+  const orderPartsLower = orderParts.map(p => p.toLowerCase().trim())
+  // Exclude internal service/shipping SKUs from the denominator too, so the ratio reflects
+  // only actual product part-number matching potential.
+  const internalRe = new RegExp(INTERNAL_SKU_REGEX)
+  const orderPartsFiltered = orderPartsLower.filter(p => !internalRe.test(p))
+  const totalParts = orderPartsFiltered.length || orderParts.length
 
   const suggestions = []
   const seenIds = new Set()
@@ -306,23 +361,29 @@ async function getMatchSuggestions(tenantId, orderId, searchQuery = null) {
   }
 
   // ── Strategy 3: Part-number overlap ────────────────────────────────────────
-  if (orderParts.length) {
+  // NOTE: In Autotask, quote_items.description holds the actual vendor SKU (e.g. "LIC-MX67-SEC-1YR").
+  // quote_items.mfg_part_number is an internal Autotask numeric ID — do NOT match on that.
+  if (orderPartsLower.length) {
+    // Exclude internal service/shipping SKUs from the count — these pollute matching
+    // because Labor-Standard appears on many quotes and could falsely inflate scores.
     const partsRes = await db.query(
       `SELECT o.id, o.title, o.po_numbers, o.client_id, o.amount, o.stage,
               o.created_date, o.closed_date, o.expected_close,
               c.name AS client_name,
-              COUNT(DISTINCT qi.mfg_part_number)                      AS matched_count,
-              ARRAY_AGG(DISTINCT qi.mfg_part_number)                  AS matched_parts
+              COUNT(DISTINCT LOWER(TRIM(qi.description)))             AS matched_count,
+              ARRAY_AGG(DISTINCT qi.description)                      AS matched_parts
          FROM opportunities o
          JOIN quotes q       ON q.opportunity_id = o.id
          JOIN quote_items qi ON qi.quote_id = q.id
          LEFT JOIN clients c ON c.id = o.client_id
         WHERE o.tenant_id = $1
-          AND qi.mfg_part_number = ANY($2::text[])
+          AND qi.description IS NOT NULL
+          AND LOWER(TRIM(qi.description)) = ANY($2::text[])
+          AND LOWER(TRIM(qi.description)) !~ $4
         GROUP BY o.id, c.name
         ORDER BY matched_count DESC, o.created_date DESC NULLS LAST
         LIMIT $3`,
-      [tenantId, orderParts, PART_OVERLAP_LIMIT]
+      [tenantId, orderPartsLower, PART_OVERLAP_LIMIT, INTERNAL_SKU_REGEX]
     )
     for (const row of partsRes.rows) {
       const matchedCount = Number(row.matched_count) || 0
@@ -471,4 +532,5 @@ module.exports = {
   matchAllUnmatched,
   getMatchSuggestions,
   normalizePo,
+  INTERNAL_SKU_REGEX,
 }

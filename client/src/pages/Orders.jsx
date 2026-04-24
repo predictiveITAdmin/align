@@ -3,6 +3,7 @@ import {
   Package, Search, RefreshCw, Inbox, AlertTriangle, Truck,
   CheckCircle2, Clock, XCircle, ChevronDown, X, ExternalLink,
   Link2, Link2Off, ChevronRight, ArrowRight, Loader2,
+  AlertOctagon, Layers, Wrench,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import PageHeader from '../components/PageHeader'
@@ -577,6 +578,10 @@ function DateRangeFilter({ label, preset, fromDate, toDate, onChange }) {
 export default function Orders() {
   const [orders, setOrders]           = useState([])
   const [stats, setStats]             = useState(null)
+  const [qaStats, setQaStats]         = useState(null)
+  const [qaView, setQaView]           = useState(null) // null | 'pos_not_written' | 'multi_distributor'
+  const [qaData, setQaData]           = useState([])
+  const [qaLoading, setQaLoading]     = useState(false)
   const [total, setTotal]             = useState(0)
   const [loading, setLoading]         = useState(true)
   const [statsLoading, setStatsLoading] = useState(true)
@@ -589,6 +594,8 @@ export default function Orders() {
   const [matchFilter, setMatchFilter] = useState('')
   // openOnly: true = default view (non-delivered); false = include delivered/cancelled history
   const [openOnly, setOpenOnly]       = useState(true)
+  // recurringMode: 'hide' (default — exclude SaaS/license renewals), 'include', 'only'
+  const [recurringMode, setRecurringMode] = useState('hide')
 
   // Date range filters (order date = server-side; delivery = client-side)
   const [orderDateFilter, setOrderDateFilter] = useState({ preset: '', from: '', to: '' })
@@ -604,11 +611,33 @@ export default function Orders() {
 
   const loadStats = useCallback(() => {
     setStatsLoading(true)
-    api.get('/orders/stats')
-      .then(r => setStats(r.data))
-      .catch(() => {})
-      .finally(() => setStatsLoading(false))
+    Promise.all([
+      api.get('/orders/stats').then(r => setStats(r.data)).catch(() => {}),
+      api.get('/orders/qa/stats').then(r => setQaStats(r.data)).catch(() => {}),
+    ]).finally(() => setStatsLoading(false))
   }, [])
+
+  const loadQaView = useCallback((view) => {
+    if (!view) { setQaView(null); setQaData([]); return }
+    setQaLoading(true)
+    setQaView(view)
+    const endpoint = view === 'pos_not_written' ? '/orders/qa/pos-not-written' : '/orders/qa/multi-distributor'
+    api.get(endpoint)
+      .then(r => setQaData(r.data || []))
+      .catch(() => setQaData([]))
+      .finally(() => setQaLoading(false))
+  }, [])
+
+  async function fixPoWriteback(orderId) {
+    try {
+      await api.post(`/orders/qa/write-po/${orderId}`)
+      // Reload the QA view + stats
+      loadStats()
+      loadQaView(qaView)
+    } catch (err) {
+      alert(`Failed to write PO: ${err.message || 'unknown error'}`)
+    }
+  }
 
   const loadOrders = useCallback(() => {
     setLoading(true)
@@ -620,6 +649,8 @@ export default function Orders() {
     if (matchFilter)  params.set('match_status', matchFilter)
     // open_only=0 loads full history (inc. delivered/cancelled); default is open only
     if (!openOnly)    params.set('open_only', '0')
+    // recurring=only shows ONLY renewals; recurring=include shows both; default hides them
+    if (recurringMode !== 'hide') params.set('recurring', recurringMode)
     if (orderDateFilter.from)   params.set('from_date', orderDateFilter.from)
     if (orderDateFilter.to)     params.set('to_date', orderDateFilter.to)
     params.set('limit', '500')
@@ -628,7 +659,7 @@ export default function Orders() {
       .then(r => { setOrders(r.data || []); setTotal(r.total || 0) })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
-  }, [search, distFilter, statusFilter, matchFilter, openOnly, orderDateFilter])
+  }, [search, distFilter, statusFilter, matchFilter, openOnly, recurringMode, orderDateFilter])
 
   useEffect(() => { loadStats() }, [loadStats])
 
@@ -764,19 +795,185 @@ export default function Orders() {
         />
       </div>
 
+      {/* QA widgets — auto-map health checks */}
+      {(qaStats?.pos_not_written > 0 || qaStats?.multi_distributor_opps > 0 || qaView) && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">QA — Auto-Map Health</h3>
+            {qaView && (
+              <button onClick={() => loadQaView(null)}
+                className="text-xs text-gray-500 hover:text-gray-700 inline-flex items-center gap-1">
+                <X size={12} /> Close detail
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <StatTile
+              icon={AlertOctagon} label="PO Not Written to AT"
+              value={qaStats?.pos_not_written ?? (statsLoading ? '…' : '0')}
+              color="bg-rose-500"
+              active={qaView === 'pos_not_written'}
+              onClick={() => loadQaView(qaView === 'pos_not_written' ? null : 'pos_not_written')}
+            />
+            <StatTile
+              icon={Layers} label="Multi-Distributor Opps"
+              value={qaStats?.multi_distributor_opps ?? (statsLoading ? '…' : '0')}
+              color="bg-indigo-500"
+              active={qaView === 'multi_distributor'}
+              onClick={() => loadQaView(qaView === 'multi_distributor' ? null : 'multi_distributor')}
+            />
+          </div>
+
+          {/* QA detail panel */}
+          {qaView === 'pos_not_written' && (
+            <div className="mt-3 bg-white border border-rose-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 bg-rose-50 border-b border-rose-100 flex items-center gap-2">
+                <AlertOctagon size={14} className="text-rose-600" />
+                <div>
+                  <p className="text-sm font-semibold text-rose-900">Auto-mapped orders without PO writeback</p>
+                  <p className="text-xs text-rose-700">These orders got linked to an opportunity, but the PO number was never pushed to Autotask. Click "Fix" to write it now.</p>
+                </div>
+              </div>
+              {qaLoading ? (
+                <div className="p-8 text-center text-gray-400"><Loader2 size={20} className="animate-spin inline mr-2" /> Loading…</div>
+              ) : qaData.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 text-sm">None — all auto-mapped orders have PO writeback.</div>
+              ) : (
+                <div className="max-h-96 overflow-y-auto divide-y divide-gray-100">
+                  {qaData.map(row => (
+                    <div key={row.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-rose-50/40 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-xs text-gray-500">{DISTRIBUTOR_LABELS[row.distributor] || row.distributor}</span>
+                          <span className="text-xs text-gray-300">·</span>
+                          <span className="text-xs font-mono text-gray-600">PO: {row.po_number}</span>
+                          <span className="text-xs text-gray-300">·</span>
+                          <span className="text-xs text-gray-500">Order #{row.distributor_order_id}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${row.match_method === 'po_fuzzy' ? 'bg-amber-50 text-amber-700 border-amber-200' : row.match_method === 'part_overlap' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                            {row.match_method} · {row.match_confidence}%
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          <span className="text-primary-600">{row.opportunity_title}</span>
+                          <span className="text-gray-400"> · {row.client_name}</span>
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          Matched {fmtTs(row.matched_at)} · existing AT POs: {(row.opp_po_numbers || []).join(', ') || 'none'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => fixPoWriteback(row.id)}
+                        className="px-3 py-1.5 bg-rose-600 text-white text-xs font-medium rounded-lg hover:bg-rose-700 inline-flex items-center gap-1 shrink-0"
+                      >
+                        <Wrench size={12} /> Write PO to AT
+                      </button>
+                      <button
+                        onClick={() => setSelectedOrderId(row.id)}
+                        className="text-gray-400 hover:text-gray-700 shrink-0"
+                        title="Open order"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {qaView === 'multi_distributor' && (
+            <div className="mt-3 bg-white border border-indigo-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 bg-indigo-50 border-b border-indigo-100 flex items-center gap-2">
+                <Layers size={14} className="text-indigo-600" />
+                <div>
+                  <p className="text-sm font-semibold text-indigo-900">Opportunities spanning multiple distributors</p>
+                  <p className="text-xs text-indigo-700">
+                    Expected Product Cost <em>excludes</em> Labor, Cabling, Installation, Shipping &amp; Freight line items from the quote.
+                    Variance = actual orders total − expected product cost.
+                  </p>
+                </div>
+              </div>
+              {qaLoading ? (
+                <div className="p-8 text-center text-gray-400"><Loader2 size={20} className="animate-spin inline mr-2" /> Loading…</div>
+              ) : qaData.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 text-sm">No opportunities with orders from multiple distributors.</div>
+              ) : (
+                <div className="max-h-[500px] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600">Opportunity / Client</th>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600">Distributors</th>
+                        <th className="px-3 py-2 text-right font-semibold text-gray-600">Orders</th>
+                        <th className="px-3 py-2 text-right font-semibold text-gray-600">Actual Total</th>
+                        <th className="px-3 py-2 text-right font-semibold text-gray-600">Expected<br />(products only)</th>
+                        <th className="px-3 py-2 text-right font-semibold text-gray-600">Variance</th>
+                        <th className="px-3 py-2 text-right font-semibold text-gray-600">Service Rev</th>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600">Date Range</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {qaData.map(row => {
+                        const variance = Number(row.variance) || 0
+                        const absVar = Math.abs(variance)
+                        const varColor = absVar > 1000 ? 'text-red-700 font-semibold' : absVar > 100 ? 'text-amber-700' : 'text-green-700'
+                        return (
+                          <tr key={row.opportunity_id} className="hover:bg-gray-50 cursor-pointer"
+                              onClick={() => setSelectedOppId(row.opportunity_id)}>
+                            <td className="px-3 py-2">
+                              <p className="font-medium text-gray-900 truncate max-w-xs" title={row.opportunity_title}>{row.opportunity_title}</p>
+                              <p className="text-gray-500">{row.client_name}</p>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {(row.distributors || []).map(d => (
+                                  <span key={d} className="inline-block px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded text-[10px]">
+                                    {DISTRIBUTOR_LABELS[d] || d}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-700">{row.order_count}</td>
+                            <td className="px-3 py-2 text-right font-mono text-gray-800">{fmt(row.actual_total_orders)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-gray-600">{fmt(row.expected_product_cost)}</td>
+                            <td className={`px-3 py-2 text-right font-mono ${varColor}`}>{variance >= 0 ? '+' : ''}{fmt(variance)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-gray-400" title="Services/shipping excluded from match">{fmt(row.service_revenue_excluded)}</td>
+                            <td className="px-3 py-2 text-gray-500 text-[11px]">
+                              {fmtDate(row.first_order_date)}
+                              {row.first_order_date !== row.last_order_date && <> – {fmtDate(row.last_order_date)}</>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {/* Open / All toggle */}
         <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden text-xs">
           <button
-            onClick={() => { setOpenOnly(true); setStatusFilter('') }}
-            className={`px-3 py-2 transition-colors ${openOnly ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+            onClick={() => { setOpenOnly(true); setStatusFilter(''); setRecurringMode('hide') }}
+            className={`px-3 py-2 transition-colors ${openOnly && recurringMode === 'hide' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
           >
             Open Orders
           </button>
           <button
-            onClick={() => setOpenOnly(false)}
-            className={`px-3 py-2 transition-colors ${!openOnly ? 'bg-gray-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+            onClick={() => { setOpenOnly(false); setRecurringMode('only') }}
+            className={`px-3 py-2 transition-colors ${recurringMode === 'only' ? 'bg-purple-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+            title="Show only license / SaaS renewal orders"
+          >
+            Renewals{stats?.recurring ? ` (${stats.recurring})` : ''}
+          </button>
+          <button
+            onClick={() => { setOpenOnly(false); setRecurringMode('include') }}
+            className={`px-3 py-2 transition-colors ${!openOnly && recurringMode === 'include' ? 'bg-gray-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
           >
             All History
           </button>
@@ -949,7 +1146,14 @@ export default function Orders() {
                     <span className="text-xs text-gray-600 whitespace-nowrap">{fmtDate(order.order_date)}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <StatusPill status={order.status} />
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <StatusPill status={order.status} />
+                      {order.is_recurring && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-purple-50 text-purple-700 border-purple-200" title="License / subscription renewal — not a physical shipment">
+                          renewal
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <StatusPill status={order.match_status} type="match" />
